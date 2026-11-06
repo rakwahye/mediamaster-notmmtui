@@ -54,19 +54,6 @@ int tui_status_read(const char *text, struct tui_status *st)
 	return seen_state ? 0 : -1;
 }
 
-/* ------------------------------------------------------------------ version */
-
-int tui_version_read(const char *text, struct tui_version *v)
-{
-	char abi[8];
-	int n = 0;
-	memset(v, 0, sizeof(*v));
-	if (sscanf(text, "%31s %31s %7s %d%n", v->name, v->version, abi, &v->abi, &n) != 4 || strcmp(abi, "abi"))
-		return -1;
-	while (text[n] == ' ' || text[n] == '\n') n++;
-	return text[n] || v->abi < 1 ? -1 : 0;
-}
-
 /* ------------------------------------------------------------------ lists */
 
 void tui_list_free(struct tui_list *l)

@@ -9,7 +9,7 @@ kept open; one second after the first watcher comes, status becomes
 status-paused.txt and the watchers are told "state". With `nowatch`,
 watch is refused as a daemon too old for it would: "err unknown verb".
 `version` is answered with <version reply>, e.g. "ok mediamaster 0.1.0
-abi 3". `watch levels` gets "levels 80 40 <bands>" 20 times a second; with
+abi 3.0". `watch levels` gets "levels 80 40 <bands>" 20 times a second; with
 watch-drop, each levels watcher is hung up on after a second. Each command
 is logged with its words. Runs until killed."""
 import os, socket, sys, threading, time

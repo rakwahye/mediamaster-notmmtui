@@ -3,6 +3,7 @@
  * (tests/fixtures), and a few made by hand for the edges. */
 #include "reply.h"
 #include "check.h"
+#include <mediamaster/mm_client.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -118,17 +119,24 @@ static int watch(void)
 	return 0;
 }
 
+/* The version reply is read by the SDK's own reader; what notmmtui needs of
+ * it, and the rule it then applies, as the daemon it was built for says. */
 static int version(void)
 {
-	struct tui_version v;
-	CHECK(tui_version_read("mediamaster 0.1.0 abi 3", &v) == 0 && !strcmp(v.name, "mediamaster") &&
-	      !strcmp(v.version, "0.1.0") && v.abi == 3, "the daemon's version");
-	CHECK(tui_version_read("mediamaster 0.2.0 abi 12\n", &v) == 0 && v.abi == 12, "a newline after");
-	CHECK(tui_version_read("fake", &v) == -1, "not a version");
-	CHECK(tui_version_read("mediamaster 0.1.0", &v) == -1, "no abi");
-	CHECK(tui_version_read("mediamaster 0.1.0 api 3", &v) == -1, "not abi");
-	CHECK(tui_version_read("mediamaster 0.1.0 abi 3 extra", &v) == -1, "something after");
-	CHECK(tui_version_read("mediamaster 0.1.0 abi 0", &v) == -1, "abi 0");
+	struct mm_version v;
+	CHECK(mm_version_read("mediamaster 0.1.0 abi 3.0", &v) == 0 && !strcmp(v.name, "mediamaster") &&
+	      !strcmp(v.version, "0.1.0") && v.abi == MM_ABI_MAKE(3, 0), "the daemon's version");
+	CHECK(mm_version_read("mediamaster 0.2.0 abi 12.4\n", &v) == 0 && MM_ABI_MAJOR_OF(v.abi) == 12 &&
+	      MM_ABI_MINOR_OF(v.abi) == 4, "a newline after");
+	CHECK(mm_version_read("fake", &v) == -1, "not a version");
+	CHECK(mm_version_read("mediamaster 0.1.0", &v) == -1, "no abi");
+	CHECK(mm_version_read("mediamaster 0.1.0 api 3.0", &v) == -1, "not abi");
+	CHECK(mm_version_read("mediamaster 0.1.0 abi 3.0 extra", &v) == -1, "something after");
+	CHECK(mm_version_read("mediamaster 0.1.0 abi 3", &v) == -1, "a number without its point");
+	CHECK(mm_version_read("mediamaster 0.1.0 abi 3.0.1", &v) == -1, "too many points");
+	CHECK(MM_ABI_FITS(MM_ABI_MAKE(3, 0), MM_ABI_MAKE(3, 2)), "a daemon with a newer minor fits");
+	CHECK(!MM_ABI_FITS(MM_ABI_MAKE(3, 2), MM_ABI_MAKE(3, 0)), "one with an older minor does not");
+	CHECK(!MM_ABI_FITS(MM_ABI_MAKE(3, 0), MM_ABI_MAKE(4, 0)), "nor another major");
 	return 0;
 }
 

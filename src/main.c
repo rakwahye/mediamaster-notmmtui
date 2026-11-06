@@ -10,9 +10,10 @@
  *
  * The IPC protocol is the only contract with the daemon: before it
  * talks to one, on start and on every reconnect, it asks `version` and
- * refuses a daemon that is not mediamaster at TUI_DAEMON_ABI, the ABI of
- * the host it was built against. On start that is an error; while
- * running, the strip says so and asks again until one fits.
+ * refuses a daemon that is not mediamaster, or one it does not fit by the
+ * SDK's rule (MM_ABI_FITS: the ABI this was built for, MM_ABI, against
+ * the one the daemon offers). On start that is an error; while running,
+ * the strip says so and asks again until one fits.
  *
  * Socket: --socket, else $MM_SOCK, else the daemon's default, as mmctl. 
  *
@@ -34,7 +35,7 @@
  * again when it closes, and left be for a daemon that has no levels. */
 
 #include "ipc.h"
-#include "paths.h"
+#include <mediamaster/mm_client.h>
 #include "keys.h"
 #include "reply.h"
 #include "strip.h"
@@ -74,14 +75,14 @@ static int daemon_fits(char *why, size_t cap, char *reply, size_t rcap)
 	char *argv[] = { "version", NULL };
 	int rc = tui_call(1, argv, reply, rcap);
 	if (rc == TUI_NO_DAEMON) return TUI_NO_DAEMON;
-	struct tui_version v;
-	if (rc != TUI_OK || tui_version_read(reply, &v) != 0 || strcmp(v.name, "mediamaster") != 0) {
-		snprintf(why, cap, "not a mediamaster daemon on %.120s (version: %.40s)", mm_paths_socket(), reply);
+	struct mm_version v;
+	if (rc != TUI_OK || mm_version_read(reply, &v) != 0 || strcmp(v.name, MM_CLIENT_NAME) != 0) {
+		snprintf(why, cap, "not a mediamaster daemon on %.120s (version: %.40s)", tui_socket(), reply);
 		return 0;
 	}
-	if (v.abi != TUI_DAEMON_ABI) {
-		snprintf(why, cap, "mediamaster %s speaks abi %d; this notmmtui was built for abi %d: rebuild it (mm-update)",
-		         v.version, v.abi, TUI_DAEMON_ABI);
+	if (!MM_ABI_FITS(MM_ABI, v.abi)) {
+		snprintf(why, cap, "mediamaster %s offers abi %u.%u; this notmmtui was built for abi %u.%u: rebuild it (mm-update)",
+		         v.version, MM_ABI_MAJOR_OF(v.abi), MM_ABI_MINOR_OF(v.abi), MM_ABI_MAJOR, MM_ABI_MINOR);
 		return 0;
 	}
 	return 1;
@@ -90,10 +91,10 @@ static int daemon_fits(char *why, size_t cap, char *reply, size_t rcap)
 static int version(void)
 {
 	char reply[256], why[256];
-	printf("notmmtui %s (for mediamaster abi %d)\n", TUI_VERSION, TUI_DAEMON_ABI);
+	printf("notmmtui %s (for mediamaster abi %u.%u)\n", TUI_VERSION, MM_ABI_MAJOR, MM_ABI_MINOR);
 	int fits = daemon_fits(why, sizeof(why), reply, sizeof(reply));
 	if (fits == TUI_NO_DAEMON) {
-		printf("daemon: not running (%s)\n", mm_paths_socket());
+		printf("daemon: not running (%s)\n", tui_socket());
 		return 1;
 	}
 	printf("daemon: %s\n", reply);
@@ -435,7 +436,7 @@ int main(int argc, char **argv)
 			}
 		} else if ((!strcmp(a, "--socket") || !strcmp(a, "--theme")) && i + 1 < argc) {
 			if (a[2] == 's') {
-				/* read by mm_paths_socket on first use, which is after this */
+				/* read by tui_socket on first use, which is after this */
 				if (!argv[i + 1][0] || setenv("MM_SOCK", argv[i + 1], 1) != 0) {
 					fputs("notmmtui: --socket needs a path\n", stderr);
 					return 2;

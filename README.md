@@ -15,10 +15,12 @@ n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits.
 it in a short terminal or pane; it fills what it is given. It follows the
 daemon through `watch`, and reconnects when the daemon restarts.
 
-Daemon: it talks to mediamaster over its socket and nothing else. Built
-against the pinned host, it refuses a daemon of another ABI (its
-`version` says which): on start it exits, while running the strip says
-so until a daemon it fits comes back. `mm-update` rebuilds both together.
+Daemon: it talks to mediamaster over its socket and nothing else. It is
+built against the installed mediamaster SDK and applies the SDK's one
+rule to the daemon it finds (its `version` says which ABI it offers): a
+daemon with a newer minor is fine, one of another major is refused. On
+start that is an error; while running the strip says so until a daemon
+it fits comes back. `mm-update` rebuilds it with the daemon.
 
 Socket: `--socket <path>`, else `$MM_SOCK`, else the daemon's default,
 as `mmctl` finds it; for a daemon started with `-o host.socket=<path>`:
@@ -30,8 +32,8 @@ black), `--theme plain` (the terminal's own), or `--theme <file>` with
 `role = #rrggbb` lines over powerlines; roles are bg fg cyan magenta
 violet orange green dim.
 
-    git clone --recursive https://github.com/rakwahye/mediamaster-notmmtui
-    make && make test
+    git clone https://github.com/rakwahye/mediamaster-notmmtui
+    make && make test          # mediamaster installed first: it builds against its SDK
     sudo make install          # /usr/local/bin/notmmtui; PREFIX=, DESTDIR= as usual
 
 Or let `mm-update` keep it current with the daemon: `mm-update add
@@ -40,5 +42,5 @@ removes it.
 
 Needs a C11 compiler, pkg-config and Notcurses 3 (`notcurses-core` and its
 headers; Arch: `notcurses`, or a source install under /usr/local, which is
-looked for too). `make test` builds the pinned daemon and runs this
-client against it with a null sink, in a pty driven by python3.
+looked for too). `make test` runs this client against the installed
+daemon with a null sink, in a pty driven by python3.

@@ -3,7 +3,7 @@
  * @brief One command, one connection, the whole reply. */
 
 #include "ipc.h"
-#include "paths.h"
+#include <mediamaster/mm_client.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,9 +14,16 @@
 
 #define IO_TIMEOUT_S 5 /* a search over the network may take a while */
 
+const char *tui_socket(void)
+{
+	static char buf[1024];
+	if (!buf[0]) mm_client_socket(buf, sizeof(buf)); /* too long: truncated, fails to connect */
+	return buf;
+}
+
 int tui_connect(void)
 {
-	const char *path = mm_paths_socket();
+	const char *path = tui_socket();
 	struct sockaddr_un a;
 	memset(&a, 0, sizeof(a));
 	a.sun_family = AF_UNIX;

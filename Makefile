@@ -3,7 +3,8 @@
 # notmmtui: a strip of a player for the mediamaster daemon.
 #
 #   make                 build/notmmtui
-#   make test            unit tests, then a smoke run against the pinned daemon
+#   make test            unit tests; install and uninstall into a scratch root;
+#                        a smoke run against the installed daemon, if there is one
 #   make SAN=asan test   same under AddressSanitizer   -> build/asan/
 #   make SAN=tsan test   same under ThreadSanitizer    -> build/tsan/
 #   make check-licenses  every source file carries an SPDX line
@@ -12,26 +13,19 @@
 #   make uninstall       removes it again
 #   make clean           removes build/
 #
-# mediamaster/ is a submodule pinned to a commit and fetched by `make`
-# when missing. From it come src/host/paths.c (where the socket is, as
-# mmctl finds it) and tests/check.h; `make test` runs its daemon.
+# Builds against the installed mediamaster SDK (pkg-config mediamaster:
+# mm_client.h, where the daemon listens and what its version reply says),
+# so install mediamaster first. notmmtui compiles in the SDK's ABI number
+# and applies the SDK's rule to the daemon it finds (MM_ABI_FITS in
+# mm_plugin.h): a daemon with a newer minor is fine, another major is
+# refused until notmmtui is rebuilt, which mm-update does.
 #
 # Needs notcurses-core >= 3.0 with headers; python3 for make test.
-#
-#   make MM=~/src/mediamaster        build against another host checkout
-#   git -C mediamaster checkout <rev> && git add mediamaster
-#                                     move the pin
 
 CC      ?= cc
-MM      ?= mediamaster
 PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 VERSION := 0.1.0
-
-fetch = $(if $(wildcard $(1)/$(2)),,$(shell git submodule update --init $(1) >&2))
-ifeq ($(MM),mediamaster)
-$(call fetch,$(MM),src/host/paths.c)
-endif
 
 SAN ?=
 ifeq ($(SAN),)
@@ -52,14 +46,29 @@ endif
 
 WARN := -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wformat=2
 
-# Notcurses: the core library only (no ffmpeg/OIIO image backend). A
-# source install goes under /usr/local, which not every pkg-config
-# searches (Arch's does not), so look there too when it is not found.
-NC_PC      := notcurses-core
 PKG_CONFIG ?= pkg-config
 ifeq ($(shell command -v $(PKG_CONFIG)),)
   $(error $(PKG_CONFIG) not found: install pkgconf (or pkg-config))
 endif
+
+# pkg-config on some distributions (Arch) does not search /usr/local, where
+# mediamaster installs by default. The daemon in PATH says where its SDK is.
+MM_BIN    := $(shell command -v mediamaster 2>/dev/null)
+MM_PC_DIR := $(if $(MM_BIN),$(abspath $(dir $(MM_BIN))../lib/pkgconfig))
+MM_PC     := PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)$(if $(MM_PC_DIR),:$(MM_PC_DIR))" $(PKG_CONFIG)
+MM_CFLAGS := $(shell $(MM_PC) --cflags mediamaster 2>/dev/null)
+ifeq ($(MM_CFLAGS),)
+  $(error mediamaster is not installed, or not in PATH: pkg-config cannot find mediamaster.pc. \
+          Run make install in the mediamaster repository first, or set PKG_CONFIG_PATH to its lib/pkgconfig)
+endif
+MM_ABI     := $(shell $(MM_PC) --variable=abi mediamaster)
+MM_INCDIR  := $(patsubst -I%,%,$(filter -I%,$(MM_CFLAGS)))
+MM_HEADERS := $(MM_INCDIR)/mm_client.h $(MM_INCDIR)/mm_plugin.h
+
+# Notcurses: the core library only (no ffmpeg/OIIO image backend). A
+# source install goes under /usr/local, which not every pkg-config
+# searches (Arch's does not), so look there too when it is not found.
+NC_PC     := notcurses-core
 NC_PCPATH := $(PKG_CONFIG_PATH)
 ifneq ($(shell $(PKG_CONFIG) --exists $(NC_PC) 2>/dev/null && echo 1),1)
   NC_PCPATH := $(PKG_CONFIG_PATH)$(if $(PKG_CONFIG_PATH),:)/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig
@@ -71,21 +80,16 @@ ifneq ($(shell $(PC) --atleast-version=3.0 $(NC_PC) 2>/dev/null && echo 1),1)
           Install notcurses with its headers, or set PKG_CONFIG_PATH to the directory of $(NC_PC).pc)
 endif
 
-# The daemon this was built for: its ABI, from the pinned host's header.
-# At start, notmmtui refuses a daemon that says another (version.c).
-DAEMON_ABI := $(shell sed -n 's/^\#define MM_ABI \([0-9]*\).*/\1/p' $(MM)/include/mm_plugin.h)
-ifeq ($(DAEMON_ABI),)
-  $(error no MM_ABI in $(MM)/include/mm_plugin.h)
-endif
-
-# A client, like mmctl: C11, plain C99 style.
-TUI_CFLAGS := -std=c11 $(WARN) $(OPT) $(SAN_FLAGS) -D_GNU_SOURCE -Isrc -I$(MM)/src/host \
-              -DTUI_VERSION=\"$(VERSION)\" -DTUI_DAEMON_ABI=$(DAEMON_ABI) $(shell $(PC) --cflags $(NC_PC))
+# A client, like mmctl: C11, plain C99 style. The ABI it is built for is
+# MM_ABI from the SDK header; every object depends on the SDK's headers,
+# so a reinstalled SDK rebuilds it.
+TUI_CFLAGS := -std=c11 $(WARN) $(OPT) $(SAN_FLAGS) -D_GNU_SOURCE -Isrc $(MM_CFLAGS) \
+              -DTUI_VERSION=\"$(VERSION)\" $(shell $(PC) --cflags $(NC_PC))
 TUI_LIBS   := $(SAN_FLAGS) $(shell $(PC) --libs $(NC_PC)) -lm
 
 SRC  := $(wildcard src/*.c)
-OBJ  := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(SRC)) $(BUILD)/obj/mm/paths.o
-HDRS := $(wildcard src/*.h)
+OBJ  := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(SRC))
+HDRS := $(wildcard src/*.h) $(MM_HEADERS)
 
 .PHONY: all test unit smoke install-test check-licenses install uninstall clean
 all: $(BUILD)/notmmtui
@@ -97,32 +101,28 @@ $(BUILD)/obj/%.o: src/%.c $(HDRS) Makefile
 	@mkdir -p $(@D)
 	$(CC) $(TUI_CFLAGS) -c $< -o $@
 
-$(BUILD)/obj/mm/paths.o: $(MM)/src/host/paths.c $(MM)/src/host/paths.h Makefile
-	@mkdir -p $(@D)
-	$(CC) $(TUI_CFLAGS) -c $< -o $@
-
 # ------------------------------------------------------------------ tests
 
-TEST_CFLAGS := $(TUI_CFLAGS) -I$(MM)/tests
+TEST_CFLAGS := $(TUI_CFLAGS) -Itests
 T := $(BUILD)/tests
 
-$(T)/test-reply: tests/reply_test.c src/reply.c src/reply.h $(MM)/tests/check.h Makefile
+$(T)/test-reply: tests/reply_test.c src/reply.c src/reply.h tests/check.h Makefile
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -lm -o $@
 
-$(T)/test-keys: tests/keys_test.c src/keys.c src/keys.h $(MM)/tests/check.h Makefile
+$(T)/test-keys: tests/keys_test.c src/keys.c src/keys.h tests/check.h Makefile
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -o $@
 
-$(T)/test-theme: tests/theme_test.c src/theme.c src/theme.h $(MM)/tests/check.h Makefile
+$(T)/test-theme: tests/theme_test.c src/theme.c src/theme.h tests/check.h Makefile
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -o $@
 
-$(T)/test-strip: tests/strip_test.c src/strip.c src/theme.c $(BUILD)/obj/mm/paths.o $(HDRS) $(MM)/tests/check.h Makefile
+$(T)/test-strip: tests/strip_test.c src/strip.c src/theme.c src/ipc.c $(HDRS) tests/check.h Makefile
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c %.o,$^) $(TUI_LIBS) -o $@
 
-$(T)/test-react: tests/react_test.c src/react.c src/react.h src/reply.h $(MM)/tests/check.h Makefile
+$(T)/test-react: tests/react_test.c src/react.c src/react.h src/reply.h tests/check.h Makefile
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -o $@
 
@@ -135,13 +135,14 @@ unit: $(TESTS)
 	@$(T)/test-strip
 	@$(T)/test-react
 
-# The daemon is the pinned host's own plain build; only this client is
-# built with SAN. Notcurses gives its input thread an alternate signal
-# stack of its own, which ASan would unmap as its own when the thread
-# ends; ASan keeps out of signal stacks here.
+# Against the installed daemon, the one this is built for; skipped when
+# none is in PATH. Only this client is built with SAN. Notcurses gives
+# its input thread an alternate signal stack of its own, which ASan would
+# unmap as its own when the thread ends; ASan keeps out of signal stacks
+# here.
 smoke: all
-	@$(MAKE) --no-print-directory -C $(MM) build/mediamaster build/mmctl >/dev/null
-	@ASAN_OPTIONS=use_sigaltstack=0 sh tests/smoke.sh $(MM)/build $(BUILD)
+	@if [ -n "$(MM_BIN)" ]; then ASAN_OPTIONS=use_sigaltstack=0 sh tests/smoke.sh $(BUILD) $(MM_ABI); \
+	else echo "smoke: skipped (no mediamaster in PATH)"; fi
 
 # install and uninstall into a scratch root, as mm-update would run them
 install-test: all

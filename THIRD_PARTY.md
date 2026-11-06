@@ -7,11 +7,11 @@ its license. Updated in the same commit that adds a dependency.
 
 Project license: LGPL-2.1-or-later (see LICENSE).
 
-## Submodules
+## Built against
 
-| Component | Pinned | License | Used for |
+| Component | From | License | Used for |
 |---|---|---|---|
-| [mediamaster](https://github.com/rakwahye/mediamaster) | `mediamaster/` | LGPL-2.1-or-later | `src/host/paths.c` compiled in (where the socket is); `tests/check.h`; the daemon for `make test` |
+| [mediamaster](https://github.com/rakwahye/mediamaster) | installed SDK (`pkg-config mediamaster`) | LGPL-2.1-or-later | built against `mm_client.h`; `tests/check.h` is a copy of its test macros; the installed daemon for `make test` |
 
 ## Linked
 

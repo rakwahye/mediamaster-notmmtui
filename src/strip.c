@@ -3,7 +3,7 @@
  * @brief One row: state, title, artist, time; plain or as a powerline. */
 
 #include "strip.h"
-#include "paths.h"
+#include "ipc.h"
 #include <math.h>
 #include <notcurses/notcurses.h>
 #include <stdio.h>
@@ -228,7 +228,7 @@ static void row(struct pen *p, const struct strip_model *m, unsigned cols)
 	}
 	if (!m->daemon) {
 		char line[300];
-		snprintf(line, sizeof(line), "mediamaster is not running (%s)", mm_paths_socket());
+		snprintf(line, sizeof(line), "mediamaster is not running (%s)", tui_socket());
 		say(p, TH_DIM, 0, line, (int)cols);
 		return;
 	}

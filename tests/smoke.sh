@@ -1,12 +1,14 @@
 #!/bin/sh
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# End-to-end: the pinned daemon with a null sink, temp config and socket,
-# and notmmtui talking to it.
-# Usage: tests/smoke.sh <mediamaster-build-dir> <notmmtui-build-dir>
+# End-to-end: the installed daemon (mediamaster and mmctl from PATH) with a
+# null sink, temp config and socket, and notmmtui talking to it.
+# Usage: tests/smoke.sh <notmmtui-build-dir> <abi>   (abi: the SDK's, "3.0")
 set -eu
 
-MB=${1:-mediamaster/build}
-B=${2:-build}
+B=${1:-build}
+ABI=${2:?abi of the installed SDK, major.minor}
+MAJ=${ABI%.*}
+MIN=${ABI#*.}
 T=$(mktemp -d /tmp/notmmtui-smoke.XXXXXX)
 PID=
 cleanup() { [ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -rf "$T"; }
@@ -15,11 +17,12 @@ trap cleanup EXIT INT TERM
 fail() { echo "FAIL smoke: $*" >&2; [ -f "$T/log" ] && sed 's/^/  log| /' "$T/log" >&2; exit 1; }
 
 export MM_SOCK="$T/mm.sock"
-MMCTL="$MB/mmctl"
+MMCTL=mmctl
 TUI="$B/notmmtui"
+command -v mediamaster >/dev/null && command -v mmctl >/dev/null || fail "mediamaster and mmctl are not in PATH"
 
 start() {
-	HOME="$T" XDG_CACHE_HOME="$T/cache" "$MB/mediamaster" -c "$T/config" -o "host.socket=$MM_SOCK" "$@" 2>>"$T/log" &
+	HOME="$T" XDG_CACHE_HOME="$T/cache" mediamaster -c "$T/config" -o "host.socket=$MM_SOCK" "$@" 2>>"$T/log" &
 	PID=$!
 	i=0
 	until "$MMCTL" version >/dev/null 2>&1; do
@@ -35,7 +38,9 @@ stop() {
 	PID=
 }
 
-printf 'host.plugin_dir = %s/plugins\nhost.sink = null\n' "$MB" >"$T/config"
+# no plugins beyond the daemon's own: the null sink is built in
+mkdir -p "$T/plugins"
+printf 'host.plugin_dir = %s/plugins\nhost.sink = null\n' "$T" >"$T/config"
 
 # --- no daemon
 out=$("$TUI" --version) && fail "--version with no daemon should exit 1"
@@ -47,8 +52,6 @@ echo "$out" | grep -q "needs a terminal" || fail "no terminal: $out"
 # --- the daemon's version, through our own client
 start
 out=$("$TUI" --version) || fail "--version: $out"
-ABI=$(sed -n 's/^#define MM_ABI \([0-9]*\).*/\1/p' "$MB/../include/mm_plugin.h")
-[ -n "$ABI" ] || fail "no MM_ABI in the host's header"
 echo "$out" | grep -qx "notmmtui [0-9.]* (for mediamaster abi $ABI)" || fail "own version: $out"
 echo "$out" | grep -qx "daemon: $("$MMCTL" version | sed 's/^ok //')" || fail "daemon version: $out"
 # --socket, over MM_SOCK: the daemon on another socket, found only by the flag
@@ -94,12 +97,20 @@ kill $FAKE; wait $FAKE 2>/dev/null || true
 n=$(grep -cx status "$T/fake.sock.log")
 [ "$n" -ge 5 ] || fail "without watch, status read only $n times in ~1.5 s"
 
-# --- a daemon this was not built for is refused: on start, and while running
-fake watch "ok mediamaster 0.9.0 abi $((ABI + 1))"
-out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" 2>&1) && { kill $FAKE; fail "another abi on start should exit 1"; }
-echo "$out" | grep -q "speaks abi $((ABI + 1)); this notmmtui was built for abi $ABI" || { kill $FAKE; fail "refusal: $out"; }
-out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" --version) && { kill $FAKE; fail "--version to another abi should exit 1"; }
-echo "$out" | grep -q "^refused: mediamaster 0.9.0 speaks abi" || { kill $FAKE; fail "--version refusal: $out"; }
+# --- the fit rule: a daemon of another major is refused, on start and while
+# running; one with a newer minor is followed
+NEXT_MAJOR="$((MAJ + 1)).0"
+NEWER_MINOR="$MAJ.$((MIN + 1))"
+fake watch "ok mediamaster 0.9.0 abi $NEXT_MAJOR"
+out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" 2>&1) && { kill $FAKE; fail "another major on start should exit 1"; }
+echo "$out" | grep -q "offers abi $NEXT_MAJOR; this notmmtui was built for abi $ABI" || { kill $FAKE; fail "refusal: $out"; }
+out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" --version) && { kill $FAKE; fail "--version to another major should exit 1"; }
+echo "$out" | grep -q "^refused: mediamaster 0.9.0 offers abi" || { kill $FAKE; fail "--version refusal: $out"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
+fake watch "ok mediamaster 0.9.0 abi $NEWER_MINOR"
+out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" --version) || { kill $FAKE; fail "--version to a newer minor: $out"; }
+echo "$out" | grep -q "^daemon: mediamaster 0.9.0 abi $NEWER_MINOR" || { kill $FAKE; fail "a newer minor fits: $out"; }
+MM_SOCK="$T/fake.sock" $TTY 1 60 "$TUI" 'wait:Tab Title' key:q || { kill $FAKE; fail "strip follows a newer minor"; }
 kill $FAKE; wait $FAKE 2>/dev/null || true
 fake watch "ok fake"
 out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" 2>&1) && { kill $FAKE; fail "a daemon of another name should be refused"; }
@@ -113,7 +124,7 @@ MM_SOCK="$T/fake.sock" $TTY 1 100 "$TUI" 'wait:not running' "touch:$T/r1" 'wait:
 	'wait:Tab Title' key:q &
 TP=$!
 i=0; until [ -e "$T/r1" ]; do i=$((i + 1)); [ $i -lt 200 ] || fail "strip did not start"; sleep 0.05; done
-fake watch "ok mediamaster 0.9.0 abi $((ABI + 1))"
+fake watch "ok mediamaster 0.9.0 abi $NEXT_MAJOR"
 i=0; until [ -e "$T/r2" ]; do i=$((i + 1)); [ $i -lt 200 ] || { kill $FAKE; fail "strip did not refuse"; }; sleep 0.05; done
 grep -qx status "$T/fake.sock.log" && { kill $FAKE; fail "status asked of a refused daemon"; }
 kill $FAKE; wait $FAKE 2>/dev/null || true

@@ -4,7 +4,7 @@
  *
  * Frame: "<verb> argc=N\n" then N NUL-terminated words (arg0 is the
  * verb). The daemon answers "ok ...", "err ..." or raw lines, then
- * closes. Socket: $MM_SOCK, else the daemon's default (mm_paths_socket). */
+ * closes. Socket: the SDK's rule (mm_client_socket), read once. */
 
 #ifndef TUI_IPC_H
 #define TUI_IPC_H
@@ -16,6 +16,10 @@ enum tui_reply {
 	TUI_OK        = 0,  /* "ok ..." (prefix stripped) or raw lines */
 	TUI_ERR       = 1   /* "err ..." (prefix stripped), or a broken reply */
 };
+
+/** Where the daemon listens: $MM_SOCK, else $XDG_RUNTIME_DIR/mediamaster.sock,
+ * else /tmp/mediamaster-<uid>.sock. Resolved on first use. */
+const char *tui_socket(void);
 
 /** Connect to the daemon's socket, with send and receive timeouts.
  * @returns the fd, or -1 when nothing answers. */
