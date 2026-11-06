@@ -2,6 +2,7 @@
 /* The strip's arithmetic: the playhead, the sky, the ink. */
 #include "strip.h"
 #include "check.h"
+#include <math.h>
 #include <string.h>
 
 static int bar(void)
@@ -93,6 +94,40 @@ static int meter(void)
 	CHECK(strip_meter_eighths(0) == 0, "silence: nothing");
 	for (int p = 1; p < 255; p++)
 		CHECK(strip_meter_eighths((uint8_t)p) <= strip_meter_eighths((uint8_t)(p + 1)), "never falls as the peak rises");
+	CHECK(strip_meter_steps(255, 16) == 16, "two cells: full scale is both full");
+	CHECK(strip_meter_steps(0x33, 16) == 11, "-14 dB: the lower cell full, 3/8 of the upper");
+	return 0;
+}
+
+static int looks(void)
+{
+	CHECK(strip_look_for(1) == STRIP_POWERLINE, "one row: powerline");
+	CHECK(strip_look_for(2) == STRIP_SCOPE && strip_look_for(5) == STRIP_SCOPE, "two rows or more: scope");
+	CHECK(strip_look_next(STRIP_PLASMA, 1) == STRIP_PLAIN, "one row: scope is skipped");
+	CHECK(strip_look_next(STRIP_PLAIN, 1) == STRIP_POWERLINE, "and round again");
+	CHECK(strip_look_next(STRIP_PLASMA, 2) == STRIP_SCOPE, "two rows: scope is one of them");
+	CHECK(strip_look_find("scope") == STRIP_SCOPE && strip_look_moves(STRIP_SCOPE), "scope, and it moves");
+	return 0;
+}
+
+static int scope(void)
+{
+	float band[TUI_BANDS] = { 0 };
+	CHECK(strip_scope_wave(band, 0.3, 1.0) == 0, "all at rest: a flat line");
+	band[0] = 0.5f;
+	CHECK(strip_scope_wave(band, 0.25, 0) > 0.95, "the lowest band alone: one whole cycle across, at its top a quarter in");
+	CHECK(strip_scope_wave(band, 0.75, 0) < -0.95, "and its bottom three quarters in");
+	CHECK(fabs(strip_scope_wave(band, 0.5, 0)) < 1e-6, "crossing in the middle");
+	CHECK(strip_scope_wave(band, 0.25, 0.5) != strip_scope_wave(band, 0.25, 0), "it travels");
+	for (int k = 0; k < TUI_BANDS; k++) band[k] = 1.0f;
+	double lo = 0, hi = 0;
+	for (int i = 0; i < 400; i++) {
+		double v = strip_scope_wave(band, i / 400.0, 0.37);
+		CHECK(v >= -1 && v <= 1, "every band at once: within the scope");
+		lo = v < lo ? v : lo;
+		hi = v > hi ? v : hi;
+	}
+	CHECK(hi - lo > 1.0, "and swinging wide rather than cancelling");
 	return 0;
 }
 
@@ -104,5 +139,7 @@ int main(void)
 	RUN(plasma);
 	RUN(decode);
 	RUN(meter);
+	RUN(looks);
+	RUN(scope);
 	CHECK_PASS("test-strip");
 }

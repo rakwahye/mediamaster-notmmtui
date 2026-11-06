@@ -245,7 +245,21 @@ if command -v ffmpeg >/dev/null; then
 	"$MMCTL" seek 120 >/dev/null
 	$TTY 1 60 "$TUI" 'wait:/ 4:00' 'moving:10' key:q || fail "powerline: pulses move the bar"
 	$TTY 1 60 "$TUI --look plasma" 'wait:/ 4:00' 'legible:2' key:q || fail "plasma on pulses: still legible"
+	$TTY 2 100 "$TUI" 'wait:4:00' 'legible:2' key:q || fail "scope on pulses: still legible"
 fi
+
+# two rows: the scope, unasked; the words on two rows, the meter two cells
+# tall (-14 dB: the lower full, 3/8 of the upper), the trace moving. One row
+# again is powerline; the height picks while no look is asked for
+"$MMCTL" play sine:440:240 >/dev/null
+"$MMCTL" seek 120 >/dev/null
+$TTY 2 100 "$TUI" 'wait:sine:440:240' 'wait:4:00' 'gone:/ 4:00' 'wait:▃▃' 'wait:██' 'moving:80@1' \
+	'size:1,100' 'wait:/ 4:00' 'size:2,100' 'gone:/ 4:00' 'key: ' 'wait:‖' 'key: ' 'wait:▶' key:q ||
+	fail "scope: two rows, one, two again; a pause"
+$TTY 2 100 "$TUI" 'wait:4:00' 'key:l' 'wait:/ 4:00' 'size:2,90' 'sleep:0.3' 'wait:/ 4:00' key:q ||
+	fail "scope: l to the next look, which stays when the size changes"
+$TTY 1 60 "$TUI --look scope" 'wait:/ 4:00' key:q || fail "scope on one row: powerline"
+$TTY 2 40 "$TUI" 'wait:sine:440:240' 'wait:4:00' key:q || fail "scope, narrow: the words alone"
 "$MMCTL" play sine:440:30 >/dev/null
 
 # the position counts on between reads; the daemon goes, comes back, is followed

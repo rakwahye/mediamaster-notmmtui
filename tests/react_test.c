@@ -31,6 +31,7 @@ static int follow(void)
 	react_step(&r, 0.05);
 	CHECK(r.bass > 0.9f && r.level > 0.9f, "a loud line: up within a line");
 	CHECK(r.treble == 0.0f, "quiet treble stays at rest (under the floor)");
+	CHECK(r.band[0] > 0.9f && r.band[TUI_BANDS - 1] == 0.0f, "each band follows its own");
 	react_feed(&r, &quiet);
 	react_step(&r, 0.05);
 	CHECK(r.bass > 0.5f, "down more slowly than up");

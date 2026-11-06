@@ -3,8 +3,9 @@
  * @brief notmmtui: a strip of a player for the mediamaster daemon.
  *
  *   notmmtui [--socket <path>] [--theme powerlines|plain|<file>]
- *            [--look powerline|plasma|plain]
- *                        the strip, in the whole terminal (make it short)
+ *            [--look powerline|plasma|scope|plain]
+ *                        the strip, in the whole terminal (make it short);
+ *                        with no --look, scope from two rows, else powerline
  *   notmmtui [--socket <path>] --version
  *                        this client's version and the daemon's
  *
@@ -17,7 +18,8 @@
  *
  * Socket: --socket, else $MM_SOCK, else the daemon's default, as mmctl. 
  *
- * Keys: the transport keys (keys.h), l the next look, q quits.
+ * Keys: the transport keys (keys.h), l the next look (of those the
+ * strip is tall enough for), q quits.
  *
  * Frames: every STRIP_FRAME_MS while the strip is changing by itself (a
  * look that moves, a title decoding in, a pause breathing); otherwise a
@@ -62,7 +64,7 @@
 static void usage(FILE *f)
 {
 	fputs("usage: notmmtui [--socket <path>] [--theme powerlines|plain|<file>]\n"
-	      "                [--look powerline|plasma|plain]\n"
+	      "                [--look powerline|plasma|scope|plain]\n"
 	      "       notmmtui [--socket <path>] --version\n"
 	      "socket: --socket, else $MM_SOCK, else the daemon's default\n", f);
 }
@@ -285,7 +287,7 @@ static int run(const struct theme *theme, int look)
 	}
 	struct strip_model m;
 	memset(&m, 0, sizeof(m));
-	m.look = look;
+	m.look = look >= 0 ? look : STRIP_POWERLINE;
 	react_reset(&m.rx);
 	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS,
 	                    .lw = TUI_WATCH_INIT, .lbackoff_ms = RETRY_MIN_MS, .rx = &m.rx };
@@ -316,6 +318,10 @@ static int run(const struct theme *theme, int look)
 		double pos = shown_position(&m, &f);
 		unsigned rows, cols;
 		ncplane_dim_yx(std, &rows, &cols);
+		if (look < 0 && m.look != strip_look_for(rows)) { /* none asked for: the height's */
+			m.look = strip_look_for(rows);
+			dirty = 1;
+		}
 		int bar = strip_bar(cols, pos, m.st.duration);
 		if (floor(pos) != m.pos || bar != m.bar) { /* the clock, or the bar by an eighth */
 			m.pos = floor(pos);
@@ -374,7 +380,8 @@ static int run(const struct theme *theme, int look)
 			} else if (k == 'q' && ncinput_nomod_p(&ni)) {
 				quit = 1;
 			} else if (k == 'l' && ncinput_nomod_p(&ni)) {
-				m.look = (m.look + 1) % STRIP_LOOKS;
+				ncplane_dim_yx(std, &rows, &cols);
+				m.look = look = strip_look_next(m.look, rows); /* asked for now */
 				dirty = 1;
 			} else if (!m.refused[0] && (cargc = keys_command(k, &ni, cargv, buf)) > 0) {
 				command(cargc, cargv, &m, &msg_until);
@@ -420,7 +427,7 @@ int main(int argc, char **argv)
 	setlocale(LC_ALL, "");
 	struct theme theme = theme_powerlines;
 	const char *theme_name = NULL;
-	int want_version = 0, look = STRIP_POWERLINE;
+	int want_version = 0, look = -1; /* -1: by the height */
 	for (int i = 1; i < argc; i++) {
 		const char *a = argv[i];
 		if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
@@ -431,7 +438,7 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "--look") && i + 1 < argc) {
 			look = strip_look_find(argv[++i]);
 			if (look < 0) {
-				fprintf(stderr, "notmmtui: no look %s (powerline, plasma, plain)\n", argv[i]);
+				fprintf(stderr, "notmmtui: no look %s (powerline, plasma, scope, plain)\n", argv[i]);
 				return 2;
 			}
 		} else if ((!strcmp(a, "--socket") || !strcmp(a, "--theme")) && i + 1 < argc) {

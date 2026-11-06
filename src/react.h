@@ -6,7 +6,8 @@
  * sound, and one silent line when it stops. From each line come targets:
  * bass, mid and treble (the lower, middle and upper thirds of its 32
  * bands), level (the louder channel's peak on the meter's 48 dB scale)
- * and a beat (bass jumping well above its own running average). Between
+ * and a beat (bass jumping well above its own running average), and each
+ * band on its own, for a look that draws them all. Between
  * lines, and after the last one, the envelopes move toward those targets
  * in time, fast up and slow down, so what is drawn at any frame rate
  * glides and falls back to rest on its own.
@@ -24,8 +25,10 @@
 struct react {
 	/* what is drawn: 0..1, moving toward the targets */
 	float bass, mid, treble, level, beat;
+	float band[TUI_BANDS];
 	/* the last line's */
 	float t_bass, t_mid, t_treble, t_level;
+	float t_band[TUI_BANDS];
 	float bass_avg, bass_last; /* bass's slow running average, for the beat */
 };
 

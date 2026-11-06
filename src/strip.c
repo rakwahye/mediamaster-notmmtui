@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /** @file strip.c
- * @brief One row: state, title, artist, time; plain or as a powerline. */
+ * @brief The strip: state, title, artist, time, on the ground of a look. */
 
 #include "strip.h"
 #include "ipc.h"
@@ -21,9 +21,17 @@
 #define SETTLE_FIRST 0.13 /* s: the first letter's moment */
 #define SETTLE_EACH  0.035
 #define METER_DB     48.0 /* the meter's range, below full scale */
+#define PHOSPHOR     0.12 /* s: how fast an old trace fades (by the look's clock) */
+#define AFTERGLOW    0.45 /* how bright a trace is once it is no longer the newest */
+#define TRACE_TALL   0.92 /* of the scope's half height, at full level */
+#define SCOPE_COLS   48   /* narrower than this, two rows of words and no scope */
 
 struct strip {
 	struct ncplane *base, *text;
+	/* the scope's phosphor: a glow 0..1 a dot, as of the look's clock at `at` */
+	float *glow;
+	int gw, gh;
+	double at;
 };
 
 void strip_clock(char *buf, size_t cap, double s)
@@ -34,7 +42,7 @@ void strip_clock(char *buf, size_t cap, double s)
 }
 
 static const char *const LOOK[STRIP_LOOKS] = {
-	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_PLAIN] = "plain",
+	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_SCOPE] = "scope", [STRIP_PLAIN] = "plain",
 };
 
 const char *strip_look_name(int look) { return look >= 0 && look < STRIP_LOOKS ? LOOK[look] : "?"; }
@@ -46,7 +54,20 @@ int strip_look_find(const char *name)
 	return -1;
 }
 
-int strip_look_moves(int look) { return look == STRIP_PLASMA; }
+int strip_look_moves(int look) { return look == STRIP_PLASMA || look == STRIP_SCOPE; }
+
+int strip_look_rows(int look) { return look == STRIP_SCOPE ? 2 : 1; }
+
+int strip_look_for(unsigned rows) { return rows >= 2 ? STRIP_SCOPE : STRIP_POWERLINE; }
+
+int strip_look_next(int look, unsigned rows)
+{
+	for (int i = 1; i <= STRIP_LOOKS; i++) {
+		int l = (look + i) % STRIP_LOOKS;
+		if ((unsigned)strip_look_rows(l) <= rows) return l;
+	}
+	return look;
+}
 
 int strip_settled(size_t i, double age) { return age >= SETTLE_FIRST + SETTLE_EACH * (double)i; }
 
@@ -115,13 +136,30 @@ uint32_t strip_ink(const struct theme *t, uint32_t under)
 	return luma(under) > BRIGHT ? (uint32_t)t->c[TH_BG] : (uint32_t)t->c[TH_FG];
 }
 
-int strip_meter_eighths(uint8_t peak)
+int strip_meter_steps(uint8_t peak, int steps)
 {
 	if (!peak) return 0;
 	double db = 20.0 * log10(peak / 255.0);
 	double h = (db + METER_DB) / METER_DB;
 	if (h <= 0) return 0;
-	return h >= 1 ? 8 : (int)lround(h * 8);
+	return h >= 1 ? steps : (int)lround(h * steps);
+}
+
+int strip_meter_eighths(uint8_t peak) { return strip_meter_steps(peak, 8); }
+
+double strip_scope_wave(const float *band, double u, double t)
+{
+	double s = 0, w = 0;
+	for (int k = 0; k < TUI_BANDS; k++) {
+		if (band[k] <= 0) continue;
+		double cycles = 1.0 + 0.75 * k, speed = 0.35 + 0.09 * k;
+		double phase = 0.618 * k; /* of a turn: the bands do not all start together */
+		s += band[k] * sin(2 * M_PI * (cycles * u - speed * t + phase));
+		w += band[k] * band[k];
+	}
+	/* over the bands' RMS weight: one band alone is a whole sine, many
+	 * together swing wider and are clipped softly rather than cancelling */
+	return w > 1e-9 ? tanh(2.0 * s / sqrt(w)) : 0;
 }
 
 int strip_bar(unsigned cols, double pos, double duration)
@@ -145,6 +183,7 @@ struct pen {
 	double age;          /* s since the track changed, for letters that decode; < 0: they don't */
 	size_t k;            /* letters put so far, while decoding */
 	int32_t fg;          /* >= 0: this colour, not the role's (a breath) */
+	int y;               /* the row */
 };
 
 static const char *const NOISE[] = { "▖", "▗", "▘", "▚", "▞", "░", "▒", "/", "\\", "<", ">", "#", "%", "*", "+", "=" };
@@ -211,11 +250,100 @@ static int put_clipped(struct pen *pn, int y, int x, const char *s, int end)
 static int say(struct pen *p, int role, int x, const char *s, int end)
 {
 	p->role = role;
-	return put_clipped(p, 0, x, s, end);
+	return put_clipped(p, p->y, x, s, end);
 }
 
-/* The row's words, wherever the ground came from. */
-static void row(struct pen *p, const struct strip_model *m, unsigned cols)
+static int text_cols(const char *s)
+{
+	mbstate_t ps;
+	memset(&ps, 0, sizeof(ps));
+	int n = 0;
+	for (const char *p = s; *p;) {
+		wchar_t wc;
+		size_t len = mbrtowc(&wc, p, strlen(p), &ps);
+		if (len == (size_t)-1 || len == (size_t)-2) break;
+		int w = wcwidth(wc);
+		n += w > 0 ? w : 1;
+		p += len;
+	}
+	return n;
+}
+
+/* Where the scope's parts go across `cols`: the words in [0, words), the
+ * meter's two cells at meter, the scope from scope on; no meter or scope
+ * when meter < 0 (too narrow). */
+struct scope_at {
+	int words, meter, scope;
+};
+
+static struct scope_at scope_at(unsigned cols)
+{
+	struct scope_at a = { (int)cols, -1, (int)cols };
+	if (cols < SCOPE_COLS) return a;
+	int w = (int)cols * 2 / 5;
+	a.words = w < 28 ? 28 : w > 44 ? 44 : w;
+	a.meter = a.words + 1;
+	a.scope = a.meter + 3;
+	return a;
+}
+
+/* The scope's words: state and title over the time played, artist over
+ * the duration (or live), and the meter, 16 steps a channel over two rows. */
+static void two_rows(struct pen *p, const struct strip_model *m, unsigned cols)
+{
+	const struct theme *t = p->t;
+	const struct tui_status *st = &m->st;
+	struct scope_at a = scope_at(cols);
+	char now[16], dur[16];
+	strip_clock(now, sizeof(now), m->pos);
+	int live = st->duration <= 0;
+	if (live) snprintf(dur, sizeof(dur), "live");
+	else strip_clock(dur, sizeof(dur), st->duration);
+	int w = text_cols(now) > text_cols(dur) ? text_cols(now) : text_cols(dur);
+	int end = a.words - w - 1;
+	if (end < 4) { /* the time wins */
+		say(p, TH_CYAN, 0, now, a.words);
+		return;
+	}
+	if (a.meter >= 0 && m->levels) {
+		static const char *const H[9] = { " ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" };
+		for (int ch = 0; ch < 2; ch++) {
+			int e = strip_meter_steps(m->lv.peak[ch], 16);
+			int lo = e > 8 ? 8 : e, hi = e > 8 ? e - 8 : 0;
+			int role = ch ? TH_MAGENTA : TH_CYAN;
+			p->y = 0;
+			say(p, role, a.meter + ch, H[hi], a.meter + ch + 1);
+			p->y = 1;
+			say(p, role, a.meter + ch, H[lo], a.meter + ch + 1);
+		}
+	}
+
+	int paused = st->state == TUI_PAUSED;
+	p->y = 0;
+	if (paused && t->c[TH_ORANGE] != THEME_DEFAULT && t->c[TH_DIM] != THEME_DEFAULT)
+		p->fg = (int32_t)rgb_mix((uint32_t)t->c[TH_DIM], (uint32_t)t->c[TH_ORANGE], m->breath);
+	int x = say(p, paused ? TH_ORANGE : TH_MAGENTA, 0, paused ? "‖ " : "▶ ", end);
+	p->fg = -1;
+	p->age = m->decode < STRIP_SETTLED ? m->decode : -1;
+	p->k = 0;
+	if (t->bold_title) ncplane_set_styles(p->n, NCSTYLE_BOLD);
+	say(p, TH_FG, x, st->title[0] ? st->title : st->uri, end);
+	ncplane_set_styles(p->n, NCSTYLE_NONE);
+	if (st->artist[0]) {
+		p->y = 1;
+		say(p, TH_VIOLET, x, st->artist, end);
+	}
+	p->age = -1;
+	p->y = 0;
+	say(p, TH_CYAN, a.words - text_cols(now), now, a.words);
+	p->y = 1;
+	say(p, live ? TH_GREEN : TH_DIM, a.words - text_cols(dur), dur, a.words);
+	p->y = 0;
+}
+
+/* The words, wherever the ground came from: on one row, or on two for
+ * the scope. */
+static void row(struct pen *p, const struct strip_model *m, unsigned cols, int two)
 {
 	const struct theme *t = p->t;
 	if (m->refused[0]) {
@@ -235,6 +363,10 @@ static void row(struct pen *p, const struct strip_model *m, unsigned cols)
 	const struct tui_status *st = &m->st;
 	if (st->state == TUI_STOPPED) {
 		say(p, TH_DIM, 0, "■ stopped", (int)cols);
+		return;
+	}
+	if (two) {
+		two_rows(p, m, cols);
 		return;
 	}
 
@@ -385,6 +517,78 @@ static void plasma_ground(struct ncplane *n, const struct strip_model *m, const 
 	}
 }
 
+/* The scope: its dots, a glow each, drawn with the finest blitter the
+ * terminal has. The trace is laid on while playing; what was there fades
+ * by the look's clock, so a pause holds it. */
+static void scope_ground(struct strip *s, const struct strip_model *m, const struct theme *t,
+                         unsigned rows, unsigned cols)
+{
+	struct ncplane *n = s->base;
+	plain_ground(n, t, rows, cols);
+	struct scope_at a = scope_at(cols);
+	int going = m->daemon && !m->msg[0] && !m->refused[0] &&
+	            (m->st.state == TUI_PLAYING || m->st.state == TUI_PAUSED);
+	if (a.meter < 0 || !going) {
+		if (s->glow) memset(s->glow, 0, sizeof(float) * (size_t)s->gw * (size_t)s->gh);
+		return;
+	}
+	struct notcurses *nc = ncplane_notcurses(n);
+	ncblitter_e blit = NCBLIT_2x1;
+	int dy = 2, dx = 1;
+	if (notcurses_canoctant(nc)) blit = NCBLIT_4x2, dy = 4, dx = 2;
+	else if (notcurses_canquadrant(nc)) blit = NCBLIT_2x2, dy = 2, dx = 2;
+	int W = ((int)cols - a.scope) * dx, H = (int)rows * dy;
+	if (W <= 0 || H <= 0) return;
+	if (W != s->gw || H != s->gh) {
+		free(s->glow);
+		s->glow = calloc((size_t)W * (size_t)H, sizeof(float));
+		s->gw = s->glow ? W : 0;
+		s->gh = s->glow ? H : 0;
+		s->at = m->anim;
+		if (!s->glow) return;
+	}
+	double since = m->anim - s->at;
+	s->at = m->anim;
+	float keep = since < 0 || since > 2 ? 0.0f : (float)exp(-since / PHOSPHOR);
+	for (int i = 0; i < W * H; i++) s->glow[i] = s->glow[i] * keep < 0.03f ? 0 : s->glow[i] * keep;
+
+	if (m->st.state == TUI_PLAYING) {
+		double tall = TRACE_TALL * (m->levels ? m->rx.level : 0);
+		int prev = -1;
+		for (int x = 0; x < W; x++) {
+			double v = tall * strip_scope_wave(m->rx.band, (x + 0.5) / W, m->anim);
+			int y = (int)lround((1.0 - (v + 1.0) / 2.0) * (H - 1));
+			y = y < 0 ? 0 : y >= H ? H - 1 : y;
+			int lo = prev < 0 ? y : prev < y ? prev : y, hi = prev < 0 ? y : prev > y ? prev : y;
+			for (int yy = lo; yy <= hi; yy++) s->glow[yy * W + x] = 1.0f;
+			prev = y;
+		}
+	}
+
+	uint32_t bg = (uint32_t)t->c[TH_BG], fg = (uint32_t)t->c[TH_FG], violet = (uint32_t)t->c[TH_VIOLET];
+	double k = m->st.state == TUI_PAUSED ? breathe(BREATH_LOW, m->breath) : 1.0;
+	uint32_t *px = malloc(sizeof(uint32_t) * (size_t)W * (size_t)H);
+	if (!px) return;
+	for (int x = 0; x < W; x++) {
+		uint32_t hot = rgb_mix(strip_sky(t, (x + 0.5) / W), fg, 0.2 + 0.5 * (m->levels ? m->rx.beat : 0));
+		for (int y = 0; y < H; y++) {
+			double g = s->glow[y * W + x];
+			/* the newest trace hot, in the sky; older ones fainter, sinking to violet */
+			uint32_t c = g >= 1.0f ? rgb_mix(bg, hot, k)
+			                       : rgb_mix(bg, rgb_mix(violet, hot, g * g), AFTERGLOW * g * k);
+			/* RGBA in memory: R first */
+			px[y * W + x] = 0xff000000u | (c & 0xff) << 16 | (c & 0xff00) | (c >> 16 & 0xff);
+		}
+	}
+	struct ncvisual *v = ncvisual_from_rgba(px, H, W * 4, W);
+	free(px);
+	if (!v) return;
+	struct ncvisual_options vo = { .n = n, .x = a.scope, .blitter = blit, .scaling = NCSCALE_NONE,
+	                               .flags = NCVISUAL_OPTION_NODEGRADE };
+	ncvisual_blit(nc, v, &vo);
+	ncvisual_destroy(v);
+}
+
 /* ------------------------------------------------------------------ strip */
 
 struct strip *strip_new(struct ncplane *base)
@@ -411,6 +615,7 @@ void strip_free(struct strip *s)
 {
 	if (!s) return;
 	ncplane_destroy(s->text);
+	free(s->glow);
 	free(s);
 }
 
@@ -426,6 +631,16 @@ void strip_draw(struct strip *s, const struct strip_model *m, const struct theme
 	ncplane_set_styles(s->base, NCSTYLE_NONE);
 	uint32_t *lit = NULL;
 	int look = has_colours(t) ? m->look : STRIP_PLAIN;
+	if ((unsigned)strip_look_rows(look) > rows) look = STRIP_POWERLINE;
+	if (look == STRIP_SCOPE) {
+		scope_ground(s, m, t, rows, cols);
+		ncplane_erase(s->text);
+		ncplane_set_styles(s->text, NCSTYLE_NONE);
+		ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
+		struct pen p = { .n = s->text, .t = t, .age = -1, .fg = -1 };
+		row(&p, m, cols, 1);
+		return;
+	}
 	if (look != STRIP_PLAIN) lit = calloc(cols, sizeof(*lit));
 	if (lit && look == STRIP_POWERLINE) powerline_ground(s->base, m, t, rows, cols, lit);
 	else if (lit && look == STRIP_PLASMA) plasma_ground(s->base, m, t, rows, cols, lit);
@@ -435,6 +650,6 @@ void strip_draw(struct strip *s, const struct strip_model *m, const struct theme
 	ncplane_set_styles(s->text, NCSTYLE_NONE);
 	ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
 	struct pen p = { .n = s->text, .t = t, .lit = lit, .veil = lit && look == STRIP_PLASMA, .age = -1, .fg = -1 };
-	row(&p, m, cols);
+	row(&p, m, cols, 0);
 	free(lit);
 }

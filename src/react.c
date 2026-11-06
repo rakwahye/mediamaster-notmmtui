@@ -34,6 +34,7 @@ static float mean(const uint8_t *b, int from, int to)
 
 void react_feed(struct react *r, const struct tui_levels *lv)
 {
+	for (int k = 0; k < TUI_BANDS; k++) r->t_band[k] = band01(lv->band[k]);
 	r->t_bass = mean(lv->band, 0, TUI_BANDS / 3);
 	r->t_mid = mean(lv->band, TUI_BANDS / 3, 2 * TUI_BANDS / 3);
 	r->t_treble = mean(lv->band, 2 * TUI_BANDS / 3, TUI_BANDS);
@@ -65,5 +66,6 @@ void react_step(struct react *r, double dt)
 	r->mid = follow(r->mid, r->t_mid, dt);
 	r->treble = follow(r->treble, r->t_treble, dt);
 	r->level = follow(r->level, r->t_level, dt);
+	for (int k = 0; k < TUI_BANDS; k++) r->band[k] = follow(r->band[k], r->t_band[k], dt);
 	r->beat *= (float)exp(-dt / TAU_BEAT);
 }

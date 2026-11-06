@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /** @file strip.h
- * @brief Drawing the strip: what plays, on one row.
+ * @brief Drawing the strip: what plays, on a row or two.
  *
  * The strip is as tall and wide as the terminal it is given; a pane one
- * to a few rows high is what it is for. Everything is on the top row:
+ * to a few rows high is what it is for. In the one-row looks everything
+ * is on the top row:
  *
  *     ▶ Title — Artist                         1:23 / 6:53
  *
@@ -22,7 +23,23 @@
  *              plasma shows through (NCALPHA_BLEND). It animates: the
  *              caller redraws every STRIP_FRAME_MS while it plays.
  *
- * A theme with no colours of its own (plain) is drawn in the plain look.
+ *   scope      two rows or more: an oscilloscope drawn from the bands, in
+ *              octants (4x2 dots a cell; quadrants or half blocks where
+ *              the terminal has none), each band a wave across it, bass
+ *              long and treble fine, as tall as the level, travelling,
+ *              flaring white on a beat; old traces glow on faintly and
+ *              sink to violet (phosphor). The
+ *              words take the left, on two rows, and a meter of two
+ *              cells by two rows (16 steps a channel) stands between:
+ *
+ *     ▶ Title           1:23 ▅▆  ∿∿∿ the scope ∿∿∿
+ *       Artist          6:53 ██  ∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿
+ *
+ *              Paused, the trace stays where it was and breathes.
+ *
+ * A theme with no colours of its own (plain) is drawn in the plain look,
+ * and a look taller than the strip (strip_look_rows) in powerline. With
+ * no look asked for, the height picks one (strip_look_for).
  *
  * In every look, on a track change the title and artist decode in: each
  * letter is noise, in cyan, until its moment, then settles, left to
@@ -52,11 +69,11 @@
 
 struct ncplane;
 
-enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_PLAIN, STRIP_LOOKS };
+enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_SCOPE, STRIP_PLAIN, STRIP_LOOKS };
 
 #define STRIP_FRAME_MS 66 /* about 15 frames a second, for a look that moves */
 
-/** "powerline", "plasma", "plain". */
+/** "powerline", "plasma", "scope", "plain". */
 const char *strip_look_name(int look);
 
 /** The look named `name`, or -1. */
@@ -64,6 +81,15 @@ int strip_look_find(const char *name);
 
 /** Whether `look` moves while playing (and needs frames, not ticks). */
 int strip_look_moves(int look);
+
+/** The rows `look` needs: 2 for scope, 1 for the rest. */
+int strip_look_rows(int look);
+
+/** The look for a strip `rows` high when none was asked for. */
+int strip_look_for(unsigned rows);
+
+/** The look after `look` that fits `rows`, for the key that switches. */
+int strip_look_next(int look, unsigned rows);
 
 /** What the strip shows; the main loop fills it from the daemon. */
 struct strip_model {
@@ -123,6 +149,16 @@ uint32_t strip_ink(const struct theme *t, uint32_t under);
 /** A peak (0..255 for 0..1 linear) as eighths of a cell, 0..8: 0 at
  * -48 dBFS or below, 8 at 0 dBFS. */
 int strip_meter_eighths(uint8_t peak);
+
+/** The same in `steps` (16: two cells of eighths). */
+int strip_meter_steps(uint8_t peak, int steps);
+
+/** The scope's trace at u (0 left .. 1 right) and time t s, -1..1 before
+ * the level: band k (envelope band[k], 0..1) is a wave of 1 + 0.75k
+ * cycles across, travelling right at 0.35 + 0.09k cycles a second, the
+ * sum taken over the bands' RMS weight and softly clipped. 0 when all
+ * rest. */
+double strip_scope_wave(const float *band, double u, double t);
 
 /** "m:ss", or "h:mm:ss" from an hour. */
 void strip_clock(char *buf, size_t cap, double s);

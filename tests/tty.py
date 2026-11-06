@@ -24,6 +24,7 @@ Steps, in order:
                   until the top row's background is brighter at x1 than at x2
     moving:<x>    until the top row's cell at x changes colour
     still:<x>,<s> for s seconds, the top row's cell at x keeps its colours
+                  (a column x in any of these may be x@y, for row y)
     legible:<s>   for s seconds, every letter on screen stands out from its
                   own background (contrast at least 1.5:1, where both are known)
 
@@ -238,6 +239,12 @@ def until(cond, what, limit=10):
     sys.exit(1)
 
 
+def at(s):
+    """x, or x@y: (y, x)."""
+    x, _, y = s.partition("@")
+    return int(y or 0), int(x)
+
+
 for st in steps:
     kind, _, arg = st.partition(":")
     if kind == "wait":
@@ -260,12 +267,12 @@ for st in steps:
         until(lambda: screen.color_of(want_text) == want, st + " (is %s)" % screen.color_of(want_text))
     elif kind == "bgat":
         x, _, want = arg.partition("=")
-        x = int(x)
-        until(lambda: (screen.b[0][x] or "default") == want, st + " (is %s)" % (screen.b[0][x] or "default"))
+        y, x = at(x)
+        until(lambda: (screen.b[y][x] or "default") == want, st + " (is %s)" % (screen.b[y][x] or "default"))
     elif kind == "fgat":
         x, _, want = arg.partition("=")
-        x = int(x)
-        until(lambda: (screen.f[0][x] or "default") == want, st + " (is %s)" % (screen.f[0][x] or "default"))
+        y, x = at(x)
+        until(lambda: (screen.f[y][x] or "default") == want, st + " (is %s)" % (screen.f[y][x] or "default"))
     elif kind == "brighter":
         a, b = (int(v) for v in arg.split(","))
         lum = lambda h: 0 if not h or not h[0].isalnum() or h.startswith("idx") else \
@@ -273,18 +280,18 @@ for st in steps:
         until(lambda: lum(screen.b[0][a]) > lum(screen.b[0][b]),
               st + " (%s vs %s)" % (screen.b[0][a], screen.b[0][b]))
     elif kind == "moving":
-        x = int(arg)
-        first = (screen.f[0][x], screen.b[0][x])
-        until(lambda: (screen.f[0][x], screen.b[0][x]) != first, st + " (stays %s on %s)" % first)
+        y, x = at(arg)
+        first = (screen.g[y][x], screen.f[y][x], screen.b[y][x])
+        until(lambda: (screen.g[y][x], screen.f[y][x], screen.b[y][x]) != first, st + " (stays %r, %s on %s)" % first)
     elif kind == "still":
         x, secs = arg.split(",")
-        x = int(x)
-        first = (screen.f[0][x], screen.b[0][x])
+        y, x = at(x)
+        first = (screen.f[y][x], screen.b[y][x])
         end = time.time() + float(secs)
         while time.time() < end:
             pump(0.02)
-            if (screen.f[0][x], screen.b[0][x]) != first:
-                sys.stderr.write("tty.py: %s: went from %s to %s\n" % (st, first, (screen.f[0][x], screen.b[0][x])))
+            if (screen.f[y][x], screen.b[y][x]) != first:
+                sys.stderr.write("tty.py: %s: went from %s to %s\n" % (st, first, (screen.f[y][x], screen.b[y][x])))
                 os.kill(pid, 9)
                 sys.exit(1)
     elif kind == "legible":
