@@ -49,8 +49,31 @@ echo "$out" | grep -qx "notmmtui [0-9.]*" || fail "own version: $out"
 echo "$out" | grep -qx "daemon: $("$MMCTL" version | sed 's/^ok //')" || fail "daemon version: $out"
 stop
 
-# --- the strip, in a pty. It waits for the daemon, then follows it.
+# --- following: with watch, status is read when a line says so, not each
+# tick; without it (an older daemon), each tick
 TTY="python3 -I tests/tty.py"
+fake() { # watch|nowatch
+	rm -f "$T/fake.sock.log"
+	MM_SOCK="$T/fake.sock" python3 -I tests/fakemm.py "$T/fake.sock" tests/fixtures "$1" &
+	FAKE=$!
+	i=0
+	until [ -S "$T/fake.sock" ]; do i=$((i + 1)); [ $i -lt 50 ] || fail "fake daemon"; sleep 0.05; done
+}
+fake watch
+MM_SOCK="$T/fake.sock" $TTY 1 60 "$TUI" 'wait:Tab Title' 'wait:▶' 'wait:‖' 'sleep:1.5' key:q ||
+	{ kill $FAKE; fail "strip with watch: a state line shows the pause"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
+grep -qx watch "$T/fake.sock.log" || fail "strip did not watch"
+n=$(grep -cx status "$T/fake.sock.log")
+[ "$n" -le 4 ] || fail "with watch, status read $n times in ~3 s"
+fake nowatch
+MM_SOCK="$T/fake.sock" $TTY 1 60 "$TUI" 'wait:Tab Title' 'sleep:1.5' key:q ||
+	{ kill $FAKE; fail "strip without watch"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
+n=$(grep -cx status "$T/fake.sock.log")
+[ "$n" -ge 5 ] || fail "without watch, status read only $n times in ~1.5 s"
+
+# --- the strip, in a pty. It waits for the daemon, then follows it.
 $TTY 1 60 "$TUI" 'wait:not running' 'wait:stopped' 'wait:sine:440:30' 'wait:0:30' 'wait:‖' key:q &
 TP=$!
 sleep 0.5
@@ -85,6 +108,15 @@ pos=$(echo "$st" | sed -n 's/^position: //p')
 $TTY 1 60 "$TUI" 'wait:sine:440:30' 'key:s' 'wait:stopped' 'key:n' 'wait:next:' key:q || fail "strip: stop, and an error shown"
 "$MMCTL" play sine:440 >/dev/null # live: a seek is refused, and the strip says so
 $TTY 1 60 "$TUI" 'wait:sine:440' 'key:[C' 'wait:seek:' 'gone:seek:' key:q || fail "strip: a refused seek, shown for a while"
+# the position counts on between reads; the daemon goes, comes back, is followed
+"$MMCTL" play sine:440:30 >/dev/null
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'wait:0:02 /' 'wait:not running' 'wait:sine:660:30' key:q &
+TP=$!
+sleep 3
+stop
+start
+"$MMCTL" play sine:660:30 >/dev/null
+wait $TP || fail "strip: counting, then a daemon restart"
 "$MMCTL" stop >/dev/null
 stop
 

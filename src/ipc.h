@@ -17,6 +17,13 @@ enum tui_reply {
 	TUI_ERR       = 1   /* "err ..." (prefix stripped), or a broken reply */
 };
 
+/** Connect to the daemon's socket, with send and receive timeouts.
+ * @returns the fd, or -1 when nothing answers. */
+int tui_connect(void);
+
+/** Send one command frame. @returns 0, or -1. */
+int tui_send(int fd, int argc, char *const *argv);
+
 /** Send argv[0..argc-1], read the whole reply into `reply` (cut to fit,
  * one trailing newline trimmed from ok/err replies).
  * @returns enum tui_reply. */

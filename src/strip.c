@@ -69,7 +69,7 @@ void strip_draw(struct ncplane *n, const struct strip_model *m)
 	}
 
 	char now[16], dur[16], right[40];
-	strip_clock(now, sizeof(now), st->position);
+	strip_clock(now, sizeof(now), m->pos);
 	if (st->duration > 0) {
 		strip_clock(dur, sizeof(dur), st->duration);
 		snprintf(right, sizeof(right), " %s / %s", now, dur);

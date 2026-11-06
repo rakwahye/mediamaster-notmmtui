@@ -14,7 +14,7 @@
 
 #define IO_TIMEOUT_S 5 /* a search over the network may take a while */
 
-static int connect_daemon(void)
+int tui_connect(void)
 {
 	const char *path = mm_paths_socket();
 	struct sockaddr_un a;
@@ -47,18 +47,24 @@ static int send_all(int fd, const void *buf, size_t len)
 	return 0;
 }
 
+int tui_send(int fd, int argc, char *const *argv)
+{
+	char hdr[256];
+	if (argc < 1) return -1;
+	int hl = snprintf(hdr, sizeof(hdr), "%s argc=%d\n", argv[0], argc);
+	int bad = hl < 0 || hl >= (int)sizeof(hdr) || send_all(fd, hdr, (size_t)hl);
+	for (int i = 0; i < argc && !bad; i++) bad = send_all(fd, argv[i], strlen(argv[i]) + 1);
+	return bad ? -1 : 0;
+}
+
 int tui_call(int argc, char *const *argv, char *reply, size_t cap)
 {
 	if (!cap) return TUI_ERR;
 	reply[0] = '\0';
 	if (argc < 1) return TUI_ERR;
-	int fd = connect_daemon();
+	int fd = tui_connect();
 	if (fd < 0) return TUI_NO_DAEMON;
-
-	char hdr[256];
-	int hl = snprintf(hdr, sizeof(hdr), "%s argc=%d\n", argv[0], argc);
-	int bad = hl < 0 || hl >= (int)sizeof(hdr) || send_all(fd, hdr, (size_t)hl);
-	for (int i = 0; i < argc && !bad; i++) bad = send_all(fd, argv[i], strlen(argv[i]) + 1);
+	int bad = tui_send(fd, argc, argv);
 
 	size_t n = 0;
 	char sink[4096];

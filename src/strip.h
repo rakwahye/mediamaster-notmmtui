@@ -23,6 +23,7 @@ struct strip_model {
 	int daemon;            /* 0: nothing answers on the socket */
 	struct tui_status st;  /* valid when daemon */
 	char msg[160];         /* shown instead of the row while set: a command's error */
+	double pos;            /* position to show, whole seconds (counted on between reads) */
 };
 
 /** Redraw `n` from `m`. */

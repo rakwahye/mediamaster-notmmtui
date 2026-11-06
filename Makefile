@@ -58,7 +58,7 @@ endif
 # A client, like mmctl: C11, plain C99 style.
 TUI_CFLAGS := -std=c11 $(WARN) $(OPT) $(SAN_FLAGS) -D_GNU_SOURCE -Isrc -I$(MM)/src/host \
               -DTUI_VERSION=\"$(VERSION)\" $(shell pkg-config --cflags $(NC_PC))
-TUI_LIBS   := $(SAN_FLAGS) $(shell pkg-config --libs $(NC_PC))
+TUI_LIBS   := $(SAN_FLAGS) $(shell pkg-config --libs $(NC_PC)) -lm
 
 SRC  := $(wildcard src/*.c)
 OBJ  := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(SRC)) $(BUILD)/obj/mm/paths.o
