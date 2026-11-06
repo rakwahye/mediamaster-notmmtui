@@ -57,7 +57,8 @@ int strip_needs_frames(const struct strip_model *m)
 	if (!m->daemon || m->msg[0] || m->refused[0]) return 0;
 	if (m->st.state == TUI_PAUSED) return 1;
 	if (m->st.state != TUI_PLAYING) return 0;
-	return strip_look_moves(m->look) || m->decode < STRIP_SETTLED;
+	int moving = m->levels && m->look != STRIP_PLAIN && (m->rx.level > 0.01f || m->rx.beat > 0.01f);
+	return strip_look_moves(m->look) || m->decode < STRIP_SETTLED || moving;
 }
 
 /* A breath: the low point at 0, the full at 1. */
@@ -313,6 +314,13 @@ static void powerline_ground(struct ncplane *n, const struct strip_model *m, con
 	int full = bar < 0 ? 0 : bar / 8, part = bar < 0 ? 0 : bar % 8;
 	double k = m->st.state == TUI_PAUSED ? LIT_PAUSE * breathe(BREATH_LOW, m->breath) : LIT;
 	double head = bar < 0 ? -100 : bar / 8.0;
+	/* with levels: the glow as wide as the bass, flaring on a beat; lit with the level */
+	double width = 3.0, glow = GLOW;
+	if (m->levels && m->st.state == TUI_PLAYING) {
+		width = 2.0 + 14.0 * m->rx.bass;
+		glow = GLOW * (0.55 + 0.45 * m->rx.level + 0.6 * m->rx.beat);
+		k = LIT * (0.80 + 0.35 * m->rx.level);
+	}
 	/* The playhead cell, lit `part` eighths from the left. Under half, a
 	 * left block of lit on the dark ground; from half on, the lit ground
 	 * with a right block of dark over the rest, so text there sits on lit,
@@ -324,7 +332,7 @@ static void powerline_ground(struct ncplane *n, const struct strip_model *m, con
 		uint32_t off = rgb_mix(bg, sky, UNLIT), on = rgb_mix(bg, sky, k);
 		if (m->st.state == TUI_PLAYING) {
 			double d = (x + 0.5) - head;
-			on = rgb_mix(on, fg, exp(-d * d / 3.0) * GLOW);
+			on = rgb_mix(on, fg, exp(-d * d / width) * glow);
 		}
 		lit[x] = 0;
 		if ((int)x < full) {
@@ -353,6 +361,11 @@ static void plasma_ground(struct ncplane *n, const struct strip_model *m, const 
 	int going = m->daemon && m->st.state != TUI_STOPPED && !m->msg[0];
 	int upto = !going ? 0 : m->bar < 0 ? (int)cols : (m->bar + 4) / 8;
 	double k = m->st.state == TUI_PAUSED ? PLASMA_PAUSE * breathe(BREATH_LOW, m->breath) : 1.0;
+	double flash = 0; /* with levels: as bright as the bass, a flash on a beat */
+	if (m->levels && m->st.state == TUI_PLAYING) {
+		k = 0.70 + 0.30 * m->rx.bass;
+		flash = 0.35 * m->rx.beat;
+	}
 	for (unsigned x = 0; x < cols; x++) {
 		lit[x] = 0;
 		if ((int)x >= upto) {
@@ -363,8 +376,8 @@ static void plasma_ground(struct ncplane *n, const struct strip_model *m, const 
 			}
 			continue;
 		}
-		uint32_t top = rgb_mix(bg, strip_plasma(t, x, 0, m->anim), k);
-		uint32_t low = rgb_mix(bg, strip_plasma(t, x, 1, m->anim), k);
+		uint32_t top = rgb_mix(rgb_mix(bg, strip_plasma(t, x, 0, m->anim), k), (uint32_t)t->c[TH_FG], flash);
+		uint32_t low = rgb_mix(rgb_mix(bg, strip_plasma(t, x, 1, m->anim), k), (uint32_t)t->c[TH_FG], flash);
 		ncplane_set_fg_rgb(n, top);
 		ncplane_set_bg_rgb(n, low);
 		ncplane_putstr_yx(n, 0, (int)x, "▀");

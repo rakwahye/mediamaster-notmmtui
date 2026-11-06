@@ -221,6 +221,22 @@ echo "$out" | grep -q 'line 1' || fail "a bad theme says where: $out"
 $TTY 1 60 "$TUI" 'wait:sine:440:30' 'wait:▆▆' 'key: ' 'wait:‖' 'gone:▆▆' 'key: ' 'wait:▆▆' \
 	key:q || fail "strip: the meter, from the daemon's levels"
 
+# the looks move with the levels: powerline's lit part follows the level. A
+# steady tone keeps a lit cell far from the playhead still once the envelope
+# has caught up with the meter (a tenth of a second or so); pulses move it
+"$MMCTL" play sine:440:240 >/dev/null
+"$MMCTL" seek 120 >/dev/null
+$TTY 1 60 "$TUI" 'wait:/ 4:00' 'wait:▆▆' 'sleep:0.3' 'still:10,1.5' key:q || fail "powerline: a steady tone, a still bar"
+if command -v ffmpeg >/dev/null; then
+	ffmpeg -v error -f lavfi -i "aevalsrc=0.9*sin(2*PI*80*t)*exp(-7*mod(t\,0.5))|0.7*sin(2*PI*160*t)*exp(-9*mod(t+0.25\,0.5)):d=240:s=48000" \
+	       "$T/pulse.flac" -y || fail "fixture"
+	"$MMCTL" play "$T/pulse.flac" >/dev/null
+	"$MMCTL" seek 120 >/dev/null
+	$TTY 1 60 "$TUI" 'wait:/ 4:00' 'moving:10' key:q || fail "powerline: pulses move the bar"
+	$TTY 1 60 "$TUI --look plasma" 'wait:/ 4:00' 'legible:2' key:q || fail "plasma on pulses: still legible"
+fi
+"$MMCTL" play sine:440:30 >/dev/null
+
 # the position counts on between reads; the daemon goes, comes back, is followed
 "$MMCTL" play sine:440:30 >/dev/null
 $TTY 1 60 "$TUI" 'wait:sine:440:30' 'wait:0:02 /' 'wait:not running' 'wait:sine:660:30' key:q &

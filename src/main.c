@@ -166,6 +166,7 @@ struct follow {
 	struct timespec lretry;
 	struct tui_levels lv;   /* the last levels line */
 	int got_levels;         /* lv is new since it was looked at */
+	struct react *rx;       /* every levels line goes to it, for the beat */
 };
 
 static void on_line(void *ctx, const char *line)
@@ -177,7 +178,10 @@ static void on_line(void *ctx, const char *line)
 static void on_levels(void *ctx, const char *line)
 {
 	struct follow *f = ctx;
-	if (tui_watch_line(line, &f->lv) & TUI_EV_LEVELS) f->got_levels = 1;
+	if (tui_watch_line(line, &f->lv) & TUI_EV_LEVELS) {
+		f->got_levels = 1;
+		react_feed(f->rx, &f->lv);
+	}
 }
 
 /* Keep `watch levels` open beside the event watch, and only then. */
@@ -185,7 +189,12 @@ static void keep_levels(struct follow *f, struct strip_model *m)
 {
 	if (f->w.fd < 0) { /* no daemon we watch: no levels either */
 		if (f->lw.fd >= 0) tui_watch_close(&f->lw);
-		if (m->levels) m->levels = 0;
+		if (m->levels) {
+			struct tui_levels none;
+			memset(&none, 0, sizeof(none));
+			m->levels = 0;
+			react_feed(&m->rx, &none);
+		}
 		f->lbackoff_ms = RETRY_MIN_MS;
 		return;
 	}
@@ -276,8 +285,9 @@ static int run(const struct theme *theme, int look)
 	struct strip_model m;
 	memset(&m, 0, sizeof(m));
 	m.look = look;
+	react_reset(&m.rx);
 	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS,
-	                    .lw = TUI_WATCH_INIT, .lbackoff_ms = RETRY_MIN_MS };
+	                    .lw = TUI_WATCH_INIT, .lbackoff_ms = RETRY_MIN_MS, .rx = &m.rx };
 	struct timespec msg_until = { 0, 0 };
 	int dirty = 1, need_status = 1, quit = 0;
 	struct timespec frame_at, changed_at, start;
@@ -326,7 +336,11 @@ static int run(const struct theme *theme, int look)
 		int playing = m.daemon && m.st.state == TUI_PLAYING;
 		double dt = since(&frame_at);
 		clock_gettime(CLOCK_MONOTONIC, &frame_at);
-		if (playing && strip_look_moves(m.look)) m.anim += dt > 0.5 ? 0.5 : dt;
+		if (dt > 0.5) dt = 0.5;
+		react_step(&m.rx, dt);
+		/* the plasma runs faster as it gets louder, and jumps on a beat */
+		double pace = m.levels ? 0.45 + 1.4 * m.rx.level + 0.8 * m.rx.beat : 1.0;
+		if (playing && strip_look_moves(m.look)) m.anim += dt * pace;
 		m.breath = m.st.state == TUI_PAUSED ? 0.5 + 0.5 * cos(2 * M_PI * since(&start) / BREATH_S) : 0;
 		int moving = strip_needs_frames(&m);
 		if (moving) dirty = 1;
@@ -376,6 +390,9 @@ static int run(const struct theme *theme, int look)
 				m.levels = 0;
 				dirty = 1;
 			}
+			struct tui_levels none;
+			memset(&none, 0, sizeof(none));
+			react_feed(&m.rx, &none); /* and the looks settle */
 		}
 		if (f.got_levels) {
 			f.got_levels = 0;

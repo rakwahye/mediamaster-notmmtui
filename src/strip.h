@@ -34,11 +34,17 @@
  * before the time, left channel then right, each an eighth block whose
  * height is its peak on a 48 dB scale (strip_meter_eighths):
  *
- *     ▶ Title — Artist                      ▆▃ 1:23 / 6:53 */
+ *     ▶ Title — Artist                      ▆▃ 1:23 / 6:53
+ *
+ * The looks move with the levels too (react.h): plasma runs faster as it
+ * gets louder and brighter with the bass, and flashes on a beat;
+ * powerline's glow widens with the bass and flares on a beat, and its lit
+ * part brightens with the level. With no levels they look as before. */
 
 #ifndef TUI_STRIP_H
 #define TUI_STRIP_H
 
+#include "react.h"
 #include "reply.h"
 #include "theme.h"
 #include <stddef.h>
@@ -73,6 +79,7 @@ struct strip_model {
 	double breath;         /* 0..1 while paused: how far up the fade is */
 	int levels;            /* lv holds what the daemon last said: show the meter */
 	struct tui_levels lv;
+	struct react rx;       /* envelopes of the levels, for the looks to move with */
 };
 
 #define STRIP_SETTLED 1e9
