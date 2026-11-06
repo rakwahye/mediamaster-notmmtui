@@ -145,6 +145,19 @@ i=0
 until [ -e "$T/settled" ]; do i=$((i + 1)); [ $i -lt 200 ] || fail "strip never settled"; sleep 0.05; done
 "$MMCTL" play sine:660:30 >/dev/null
 wait $TP || fail "decode on a track change"
+# a track change from late in a track: the new one starts at 0:00 (the
+# daemon may still say the old position just as the item changes)
+"$MMCTL" play sine:440:400 >/dev/null
+"$MMCTL" seek 300 >/dev/null
+rm -f "$T/settled"
+$TTY 1 60 "$TUI" 'wait:/ 6:40' "touch:$T/settled" 'wait:/ 6:23' 'soon:0:0' key:q &
+TP=$!
+i=0
+until [ -e "$T/settled" ]; do i=$((i + 1)); [ $i -lt 200 ] || fail "strip never showed the first track"; sleep 0.05; done
+"$MMCTL" play sine:550:383 >/dev/null
+wait $TP || fail "after a track change, the position of the new track"
+"$MMCTL" play sine:440:30 >/dev/null
+
 # paused breathes: powerline's lit part, plain's ‖
 "$MMCTL" seek 15 >/dev/null
 "$MMCTL" pause >/dev/null

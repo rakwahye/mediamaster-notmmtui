@@ -8,6 +8,7 @@
 Steps, in order:
     wait:<text>   until <text> is on the screen
     gone:<text>   until it no longer is
+    soon:<text>   as wait, but in 2 s, not 10
     key:<keys>    type them; \\e is Escape, \\r Enter, [A..[D arrows
     size:<r>,<c>  resize the terminal (SIGWINCH)
     sleep:<s>     pause
@@ -238,6 +239,8 @@ for st in steps:
     kind, _, arg = st.partition(":")
     if kind == "wait":
         until(lambda: arg in text(), st)
+    elif kind == "soon":
+        until(lambda: arg in text(), st, 2)
     elif kind == "gone":
         until(lambda: arg not in text(), st)
     elif kind == "key":

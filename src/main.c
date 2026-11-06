@@ -17,7 +17,9 @@
  * wake every TICK_MS, drawing only what changed.
  *
  * It follows the daemon through a `watch` connection: status is read
- * again when a line says something changed, and every RESYNC_MS anyway;
+ * again when a line says something changed, once more FOLLOWUP_MS
+ * later (just as the item changes, the daemon can still report the old
+ * item's position), and every RESYNC_MS anyway;
  * between reads the position is counted here. When the connection
  * closes it is opened again; a daemon that cannot watch is asked for
  * status every tick instead. */
@@ -41,6 +43,7 @@
 #define TICK_MS 250
 #define MSG_MS 2000
 #define RESYNC_MS 10000
+#define FOLLOWUP_MS 300 /* a change is read again this soon: the daemon may be mid-way */
 #define RETRY_MIN_MS 250   /* watch closed: open again after this, doubling */
 #define RETRY_MAX_MS 2000
 #define RETRY_OLD_MS 10000 /* the daemon cannot watch: ask again after this */
@@ -128,6 +131,7 @@ struct follow {
 	struct timespec resync; /* read status again from then */
 	struct timespec read_at;/* when status was last read */
 	unsigned events;        /* TUI_EV_* from lines not yet acted on */
+	int followup;           /* the last read was for a change: read again soon */
 };
 
 static void on_line(void *ctx, const char *line)
@@ -203,7 +207,8 @@ static int run(const struct theme *theme, int look)
 		if (need_status) {
 			dirty |= poll_status(&m);
 			clock_gettime(CLOCK_MONOTONIC, &f.read_at);
-			deadline(&f.resync, RESYNC_MS);
+			deadline(&f.resync, f.followup ? FOLLOWUP_MS : RESYNC_MS);
+			f.followup = 0;
 			need_status = 0;
 		}
 		double pos = shown_position(&m, &f);
@@ -273,6 +278,7 @@ static int run(const struct theme *theme, int look)
 		}
 		if (f.events) {
 			need_status = 1;
+			f.followup = 1;
 			f.events = 0;
 		}
 	}
