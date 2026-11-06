@@ -10,6 +10,11 @@ n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, q quits. Run
 it in a short terminal or pane; it fills what it is given. It follows the
 daemon through `watch`, and reconnects when the daemon restarts.
 
+Socket: `--socket <path>`, else `$MM_SOCK`, else the daemon's default,
+as `mmctl` finds it; for a daemon started with `-o host.socket=<path>`:
+
+    notmmtui --socket <path>
+
 Colours: `--theme powerlines` (the default: magenta and electric cyan on
 black), `--theme plain` (the terminal's own), or `--theme <file>` with
 `role = #rrggbb` lines over powerlines; roles are bg fg cyan magenta

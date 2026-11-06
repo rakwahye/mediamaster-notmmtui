@@ -2,9 +2,12 @@
 /** @file main.c
  * @brief notmmtui: a strip of a player for the mediamaster daemon.
  *
- *   notmmtui [--theme powerlines|plain|<file>]
+ *   notmmtui [--socket <path>] [--theme powerlines|plain|<file>]
  *                        the strip, in the whole terminal (make it short)
- *   notmmtui --version   this client's version and the daemon's
+ *   notmmtui [--socket <path>] --version
+ *                        this client's version and the daemon's
+ *
+ * Socket: --socket, else $MM_SOCK, else the daemon's default, as mmctl. 
  *
  * Keys: the transport keys (keys.h), q quits.
  *
@@ -15,6 +18,7 @@
  * status every tick instead. */
 
 #include "ipc.h"
+#include "paths.h"
 #include "keys.h"
 #include "reply.h"
 #include "strip.h"
@@ -38,8 +42,9 @@
 
 static void usage(FILE *f)
 {
-	fputs("usage: notmmtui [--theme powerlines|plain|<file>]\n"
-	      "       notmmtui --version\n", f);
+	fputs("usage: notmmtui [--socket <path>] [--theme powerlines|plain|<file>]\n"
+	      "       notmmtui [--socket <path>] --version\n"
+	      "socket: --socket, else $MM_SOCK, else the daemon's default\n", f);
 }
 
 static int version(void)
@@ -49,7 +54,7 @@ static int version(void)
 	printf("notmmtui %s\n", TUI_VERSION);
 	int rc = tui_call(1, argv, reply, sizeof(reply));
 	if (rc == TUI_NO_DAEMON) {
-		puts("daemon: not running");
+		printf("daemon: not running (%s)\n", mm_paths_socket());
 		return 1;
 	}
 	printf("daemon: %s\n", reply);
@@ -234,21 +239,39 @@ static int run(const struct theme *theme)
 int main(int argc, char **argv)
 {
 	setlocale(LC_ALL, "");
-	if (argc == 2 && !strcmp(argv[1], "--version")) return version();
-	if (argc == 2 && (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help"))) {
-		usage(stdout);
-		return 0;
-	}
 	struct theme theme = theme_powerlines;
-	if (argc == 3 && !strcmp(argv[1], "--theme")) {
+	const char *theme_name = NULL;
+	int want_version = 0;
+	for (int i = 1; i < argc; i++) {
+		const char *a = argv[i];
+		if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
+			usage(stdout);
+			return 0;
+		} else if (!strcmp(a, "--version")) {
+			want_version = 1;
+		} else if ((!strcmp(a, "--socket") || !strcmp(a, "--theme")) && i + 1 < argc) {
+			if (a[2] == 's') {
+				/* read by mm_paths_socket on first use, which is after this */
+				if (!argv[i + 1][0] || setenv("MM_SOCK", argv[i + 1], 1) != 0) {
+					fputs("notmmtui: --socket needs a path\n", stderr);
+					return 2;
+				}
+			} else {
+				theme_name = argv[i + 1];
+			}
+			i++;
+		} else {
+			usage(stderr);
+			return 2;
+		}
+	}
+	if (want_version) return version();
+	if (theme_name) {
 		char err[256];
-		if (theme_load(argv[2], &theme, err, sizeof(err)) != 0) {
+		if (theme_load(theme_name, &theme, err, sizeof(err)) != 0) {
 			fprintf(stderr, "notmmtui: theme %s\n", err);
 			return 2;
 		}
-	} else if (argc != 1) {
-		usage(stderr);
-		return 2;
 	}
 	return run(&theme);
 }

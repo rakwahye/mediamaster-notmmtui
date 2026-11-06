@@ -3,6 +3,7 @@
  * @brief One row: state, title, artist, time. */
 
 #include "strip.h"
+#include "paths.h"
 #include <notcurses/notcurses.h>
 #include <stdio.h>
 #include <string.h>
@@ -81,7 +82,9 @@ void strip_draw(struct ncplane *n, const struct strip_model *m, const struct the
 	}
 	if (!m->daemon) {
 		ink(n, t, TH_DIM);
-		put_clipped(n, 0, 0, "mediamaster is not running", (int)cols);
+		char line[300];
+		snprintf(line, sizeof(line), "mediamaster is not running (%s)", mm_paths_socket());
+		put_clipped(n, 0, 0, line, (int)cols);
 		return;
 	}
 	const struct tui_status *st = &m->st;

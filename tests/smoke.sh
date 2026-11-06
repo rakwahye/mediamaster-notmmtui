@@ -39,7 +39,7 @@ printf 'host.plugin_dir = %s/plugins\nhost.sink = null\n' "$MB" >"$T/config"
 
 # --- no daemon
 out=$("$TUI" --version) && fail "--version with no daemon should exit 1"
-echo "$out" | grep -qx "daemon: not running" || fail "no daemon: $out"
+echo "$out" | grep -qx "daemon: not running ($MM_SOCK)" || fail "no daemon, and where it looked: $out"
 if "$TUI" --nosuch 2>/dev/null; then fail "an unknown option should fail"; fi
 
 # --- the daemon's version, through our own client
@@ -47,6 +47,13 @@ start
 out=$("$TUI" --version) || fail "--version: $out"
 echo "$out" | grep -qx "notmmtui [0-9.]*" || fail "own version: $out"
 echo "$out" | grep -qx "daemon: $("$MMCTL" version | sed 's/^ok //')" || fail "daemon version: $out"
+# --socket, over MM_SOCK: the daemon on another socket, found only by the flag
+out=$(MM_SOCK="$T/nowhere.sock" "$TUI" --socket "$MM_SOCK" --version) || fail "--socket: $out"
+echo "$out" | grep -q "^daemon: mediamaster" || fail "--socket: $out"
+out=$("$TUI" --socket "$T/nowhere.sock" --version) && fail "--socket to nothing should exit 1"
+echo "$out" | grep -qx "daemon: not running ($T/nowhere.sock)" || fail "--socket to nothing: $out"
+if "$TUI" --socket 2>/dev/null; then fail "--socket without a path should fail"; fi
+if "$TUI" --socket "" --version 2>/dev/null; then fail "--socket with an empty path should fail"; fi
 stop
 
 # --- following: with watch, status is read when a line says so, not each
@@ -112,6 +119,7 @@ $TTY 1 60 "$TUI" 'wait:sine:440' 'key:[C' 'wait:seek:' 'gone:seek:' key:q || fai
 "$MMCTL" play sine:440:30 >/dev/null
 $TTY 1 60 "$TUI" 'wait:sine:440:30' 'color:▶=ff2bd6' 'color:sine:440:30=e6f0ff' 'color:0:0=19d3ff' \
 	'color:/ 0:30=3a3f5c' 'key: ' 'color:‖=ff7a1a' 'key: ' key:q || fail "theme powerlines"
+MM_SOCK="$T/nowhere.sock" $TTY 1 60 "$TUI --socket $MM_SOCK" 'wait:sine:440:30' key:q || fail "strip: --socket"
 $TTY 1 60 "$TUI --theme plain" 'wait:sine:440:30' 'color:▶=default' 'color:sine:440:30=default' key:q ||
 	fail "theme plain"
 printf '# mine\nmagenta = #00ff00\n' >"$T/theme"
