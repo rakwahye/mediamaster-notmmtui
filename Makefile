@@ -7,7 +7,10 @@
 #   make SAN=asan test   same under AddressSanitizer   -> build/asan/
 #   make SAN=tsan test   same under ThreadSanitizer    -> build/tsan/
 #   make check-licenses  every source file carries an SPDX line
-#   make install PREFIX=/usr/local
+#   make install         $(DESTDIR)$(BINDIR)/notmmtui; BINDIR = $(PREFIX)/bin,
+#                        PREFIX = /usr/local unless given
+#   make uninstall       removes it again
+#   make clean           removes build/
 #
 # mediamaster/ is a submodule pinned to a commit and fetched by `make`
 # when missing. From it come src/host/paths.c (where the socket is, as
@@ -77,7 +80,7 @@ SRC  := $(wildcard src/*.c)
 OBJ  := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(SRC)) $(BUILD)/obj/mm/paths.o
 HDRS := $(wildcard src/*.h)
 
-.PHONY: all test unit smoke check-licenses install clean
+.PHONY: all test unit smoke install-test check-licenses install uninstall clean
 all: $(BUILD)/notmmtui
 
 $(BUILD)/notmmtui: $(OBJ)
@@ -128,7 +131,12 @@ smoke: all
 	@$(MAKE) --no-print-directory -C $(MM) build/mediamaster build/mmctl >/dev/null
 	@ASAN_OPTIONS=use_sigaltstack=0 sh tests/smoke.sh $(MM)/build $(BUILD)
 
+# install and uninstall into a scratch root, as mm-update would run them
+install-test: all
+	@sh tests/install.sh $(MAKE) $(SAN)
+
 test: unit
+	@$(MAKE) --no-print-directory install-test
 	@$(MAKE) --no-print-directory smoke
 
 check-licenses:
@@ -139,7 +147,10 @@ check-licenses:
 
 install: all
 	install -d $(DESTDIR)$(BINDIR)
-	install -m 755 $(BUILD)/notmmtui $(DESTDIR)$(BINDIR)
+	install -m 755 $(BUILD)/notmmtui $(DESTDIR)$(BINDIR)/notmmtui
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/notmmtui
 
 clean:
 	rm -rf build

@@ -26,6 +26,11 @@ violet orange green dim.
 
     git clone --recursive https://github.com/rakwahye/mediamaster-notmmtui
     make && make test
+    sudo make install          # /usr/local/bin/notmmtui; PREFIX=, DESTDIR= as usual
+
+Or let `mm-update` keep it current with the daemon: `mm-update add
+~/path/to/mediamaster-notmmtui` once, then `mm-update`. `make uninstall`
+removes it.
 
 Needs a C11 compiler, pkg-config and Notcurses 3 (`notcurses-core` and its
 headers; Arch: `notcurses`, or a source install under /usr/local, which is
