@@ -146,7 +146,7 @@ until [ -e "$T/settled" ]; do i=$((i + 1)); [ $i -lt 200 ] || fail "strip never 
 "$MMCTL" play sine:660:30 >/dev/null
 wait $TP || fail "decode on a track change"
 # a track change from late in a track: the new one starts at 0:00 (the
-# daemon may still say the old position just as the item changes)
+# daemon reports a new item's position at once since 290f26c)
 "$MMCTL" play sine:440:400 >/dev/null
 "$MMCTL" seek 300 >/dev/null
 rm -f "$T/settled"
