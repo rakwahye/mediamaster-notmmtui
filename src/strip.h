@@ -58,6 +58,7 @@ struct strip_model {
 	int daemon;            /* 0: nothing answers on the socket */
 	struct tui_status st;  /* valid when daemon */
 	char msg[160];         /* shown instead of the row while set: a command's error */
+	char refused[200];     /* the daemon is not one this was built for, and why */
 	double pos;            /* position to show, whole seconds (counted on between reads) */
 	int bar;               /* playhead in eighths of a cell (strip_bar), -1 for none */
 	int look;              /* enum strip_look */

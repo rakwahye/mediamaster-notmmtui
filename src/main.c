@@ -8,6 +8,12 @@
  *   notmmtui [--socket <path>] --version
  *                        this client's version and the daemon's
  *
+ * The IPC protocol is the only contract with the daemon: before it
+ * talks to one, on start and on every reconnect, it asks `version` and
+ * refuses a daemon that is not mediamaster at TUI_DAEMON_ABI, the ABI of
+ * the host it was built against. On start that is an error; while
+ * running, the strip says so and asks again until one fits.
+ *
  * Socket: --socket, else $MM_SOCK, else the daemon's default, as mmctl. 
  *
  * Keys: the transport keys (keys.h), l the next look, q quits.
@@ -54,18 +60,39 @@ static void usage(FILE *f)
 	      "socket: --socket, else $MM_SOCK, else the daemon's default\n", f);
 }
 
-static int version(void)
+/* Whether the daemon on the socket is one this was built for.
+ * @returns 1 yes, 0 no (why says why), TUI_NO_DAEMON when none answers.
+ * reply gets what it said. */
+static int daemon_fits(char *why, size_t cap, char *reply, size_t rcap)
 {
 	char *argv[] = { "version", NULL };
-	char reply[256];
-	printf("notmmtui %s\n", TUI_VERSION);
-	int rc = tui_call(1, argv, reply, sizeof(reply));
-	if (rc == TUI_NO_DAEMON) {
+	int rc = tui_call(1, argv, reply, rcap);
+	if (rc == TUI_NO_DAEMON) return TUI_NO_DAEMON;
+	struct tui_version v;
+	if (rc != TUI_OK || tui_version_read(reply, &v) != 0 || strcmp(v.name, "mediamaster") != 0) {
+		snprintf(why, cap, "not a mediamaster daemon on %.120s (version: %.40s)", mm_paths_socket(), reply);
+		return 0;
+	}
+	if (v.abi != TUI_DAEMON_ABI) {
+		snprintf(why, cap, "mediamaster %s speaks abi %d; this notmmtui was built for abi %d: rebuild it (mm-update)",
+		         v.version, v.abi, TUI_DAEMON_ABI);
+		return 0;
+	}
+	return 1;
+}
+
+static int version(void)
+{
+	char reply[256], why[256];
+	printf("notmmtui %s (for mediamaster abi %d)\n", TUI_VERSION, TUI_DAEMON_ABI);
+	int fits = daemon_fits(why, sizeof(why), reply, sizeof(reply));
+	if (fits == TUI_NO_DAEMON) {
 		printf("daemon: not running (%s)\n", mm_paths_socket());
 		return 1;
 	}
 	printf("daemon: %s\n", reply);
-	return rc == TUI_OK ? 0 : 1;
+	if (!fits) printf("refused: %s\n", why);
+	return fits ? 0 : 1;
 }
 
 /* Ask for status. @returns 1 if what the strip shows changed. */
@@ -136,10 +163,32 @@ static void on_line(void *ctx, const char *line)
 	f->events |= tui_watch_line(line, NULL);
 }
 
-/* Keep a watch connection open, or say why not. */
-static void keep_watching(struct follow *f, int *need_status)
+/* Keep a watch connection open to a daemon that fits, or say why not.
+ * Each connection, the first and every one after, is checked first. */
+static void keep_watching(struct follow *f, struct strip_model *m, int *need_status)
 {
 	if (f->w.fd >= 0 || !past(&f->retry)) return;
+	char why[sizeof(m->refused)], reply[256];
+	int fits = daemon_fits(why, sizeof(why), reply, sizeof(reply));
+	if (fits == 0) { /* say so, and look again in a while */
+		if (strcmp(m->refused, why)) {
+			snprintf(m->refused, sizeof(m->refused), "%s", why);
+			*need_status = 1; /* a redraw; status itself is not asked */
+		}
+		f->polling = 0;
+		deadline(&f->retry, RETRY_MAX_MS);
+		return;
+	}
+	if (m->refused[0]) {
+		m->refused[0] = '\0';
+		*need_status = 1;
+	}
+	if (fits == TUI_NO_DAEMON) {
+		f->polling = 1; /* status says it is not running, every tick */
+		deadline(&f->retry, f->backoff_ms);
+		f->backoff_ms = f->backoff_ms * 2 > RETRY_MAX_MS ? RETRY_MAX_MS : f->backoff_ms * 2;
+		return;
+	}
 	char *argv[] = { "watch", NULL };
 	int rc = tui_watch_open(&f->w, 1, argv);
 	if (rc == TUI_OK) {
@@ -198,8 +247,14 @@ static int run(const struct theme *theme, int look)
 	m.decode = STRIP_SETTLED;
 
 	while (!quit) {
-		keep_watching(&f, &need_status);
+		keep_watching(&f, &m, &need_status);
 		if (f.polling || past(&f.resync)) need_status = 1;
+		if (need_status && m.refused[0]) { /* not ours to talk to: no status, just the refusal */
+			m.daemon = 0;
+			memset(&m.st, 0, sizeof(m.st));
+			dirty = 1;
+			need_status = 0;
+		}
 		if (need_status) {
 			dirty |= poll_status(&m);
 			clock_gettime(CLOCK_MONOTONIC, &f.read_at);
@@ -262,7 +317,7 @@ static int run(const struct theme *theme, int look)
 			} else if (k == 'l' && ncinput_nomod_p(&ni)) {
 				m.look = (m.look + 1) % STRIP_LOOKS;
 				dirty = 1;
-			} else if ((cargc = keys_command(k, &ni, cargv, buf)) > 0) {
+			} else if (!m.refused[0] && (cargc = keys_command(k, &ni, cargv, buf)) > 0) {
 				command(cargc, cargv, &m, &msg_until);
 				need_status = dirty = 1; /* show the result now */
 			}
@@ -318,12 +373,18 @@ int main(int argc, char **argv)
 		}
 	}
 	if (want_version) return version();
+	/* what was asked first, then the daemon */
 	if (theme_name) {
 		char err[256];
 		if (theme_load(theme_name, &theme, err, sizeof(err)) != 0) {
 			fprintf(stderr, "notmmtui: theme %s\n", err);
 			return 2;
 		}
+	}
+	char why[256], reply[256];
+	if (daemon_fits(why, sizeof(why), reply, sizeof(reply)) == 0) { /* none running is fine: the strip waits */
+		fprintf(stderr, "notmmtui: %s\n", why);
+		return 1;
 	}
 	return run(&theme, look);
 }

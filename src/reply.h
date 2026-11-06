@@ -34,6 +34,18 @@ struct tui_status {
 /** @returns 0, or -1 if `text` has no state line (not a status reply). */
 int tui_status_read(const char *text, struct tui_status *st);
 
+/* ------------------------------------------------------------------ version */
+
+/** `version`: "mediamaster 0.1.0 abi 3". */
+struct tui_version {
+	char name[32];
+	char version[32];
+	int abi;
+};
+
+/** @returns 0, or -1 if `text` is not "<name> <version> abi <n>". */
+int tui_version_read(const char *text, struct tui_version *v);
+
 /* ------------------------------------------------------------------ lists */
 
 enum tui_kind { TUI_TRACK = 1, TUI_LIST = 2 };

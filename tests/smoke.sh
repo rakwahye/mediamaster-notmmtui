@@ -45,7 +45,9 @@ if "$TUI" --nosuch 2>/dev/null; then fail "an unknown option should fail"; fi
 # --- the daemon's version, through our own client
 start
 out=$("$TUI" --version) || fail "--version: $out"
-echo "$out" | grep -qx "notmmtui [0-9.]*" || fail "own version: $out"
+ABI=$(sed -n 's/^#define MM_ABI \([0-9]*\).*/\1/p' "$MB/../include/mm_plugin.h")
+[ -n "$ABI" ] || fail "no MM_ABI in the host's header"
+echo "$out" | grep -qx "notmmtui [0-9.]* (for mediamaster abi $ABI)" || fail "own version: $out"
 echo "$out" | grep -qx "daemon: $("$MMCTL" version | sed 's/^ok //')" || fail "daemon version: $out"
 # --socket, over MM_SOCK: the daemon on another socket, found only by the flag
 out=$(MM_SOCK="$T/nowhere.sock" "$TUI" --socket "$MM_SOCK" --version) || fail "--socket: $out"
@@ -59,9 +61,10 @@ stop
 # --- following: with watch, status is read when a line says so, not each
 # tick; without it (an older daemon), each tick
 TTY="python3 -I tests/tty.py"
-fake() { # watch|nowatch
-	rm -f "$T/fake.sock.log"
-	MM_SOCK="$T/fake.sock" python3 -I tests/fakemm.py "$T/fake.sock" tests/fixtures "$1" &
+fake() { # watch|nowatch [version reply]
+	rm -f "$T/fake.sock.log" "$T/fake.sock" # so the wait below is for this one
+	MM_SOCK="$T/fake.sock" python3 -I tests/fakemm.py "$T/fake.sock" tests/fixtures "$1" \
+		"${2:-ok mediamaster 0.1.0 abi $ABI}" &
 	FAKE=$!
 	i=0
 	until [ -S "$T/fake.sock" ]; do i=$((i + 1)); [ $i -lt 50 ] || fail "fake daemon"; sleep 0.05; done
@@ -79,6 +82,33 @@ MM_SOCK="$T/fake.sock" $TTY 1 60 "$TUI" 'wait:Tab Title' 'sleep:1.5' key:q ||
 kill $FAKE; wait $FAKE 2>/dev/null || true
 n=$(grep -cx status "$T/fake.sock.log")
 [ "$n" -ge 5 ] || fail "without watch, status read only $n times in ~1.5 s"
+
+# --- a daemon this was not built for is refused: on start, and while running
+fake watch "ok mediamaster 0.9.0 abi $((ABI + 1))"
+out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" 2>&1) && { kill $FAKE; fail "another abi on start should exit 1"; }
+echo "$out" | grep -q "speaks abi $((ABI + 1)); this notmmtui was built for abi $ABI" || { kill $FAKE; fail "refusal: $out"; }
+out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" --version) && { kill $FAKE; fail "--version to another abi should exit 1"; }
+echo "$out" | grep -q "^refused: mediamaster 0.9.0 speaks abi" || { kill $FAKE; fail "--version refusal: $out"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
+fake watch "ok fake"
+out=$(MM_SOCK="$T/fake.sock" timeout 10 "$TUI" 2>&1) && { kill $FAKE; fail "a daemon of another name should be refused"; }
+echo "$out" | grep -q "not a mediamaster daemon" || { kill $FAKE; fail "refusal: $out"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
+grep -qx status "$T/fake.sock.log" && fail "status asked of a refused daemon"
+# running: waits for a daemon; one of another abi comes and is refused in the
+# strip; it goes, the right one comes, and the strip follows it
+rm -f "$T/fake.sock"
+MM_SOCK="$T/fake.sock" $TTY 1 100 "$TUI" 'wait:not running' "touch:$T/r1" 'wait:built for abi' "touch:$T/r2" \
+	'wait:Tab Title' key:q &
+TP=$!
+i=0; until [ -e "$T/r1" ]; do i=$((i + 1)); [ $i -lt 200 ] || fail "strip did not start"; sleep 0.05; done
+fake watch "ok mediamaster 0.9.0 abi $((ABI + 1))"
+i=0; until [ -e "$T/r2" ]; do i=$((i + 1)); [ $i -lt 200 ] || { kill $FAKE; fail "strip did not refuse"; }; sleep 0.05; done
+grep -qx status "$T/fake.sock.log" && { kill $FAKE; fail "status asked of a refused daemon"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
+fake watch
+wait $TP || { kill $FAKE; fail "strip: refuse, then follow the right daemon"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
 
 # --- the strip, in a pty. It waits for the daemon, then follows it.
 $TTY 1 60 "$TUI" 'wait:not running' 'wait:stopped' 'wait:sine:440:30' 'wait:0:30' 'wait:‖' key:q &

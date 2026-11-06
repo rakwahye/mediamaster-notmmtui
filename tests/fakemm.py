@@ -1,17 +1,18 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """A stand-in daemon, to see how the strip follows one.
 
-    fakemm.py <socket> <fixtures> watch|nowatch
+    fakemm.py <socket> <fixtures> watch|nowatch <version reply>
 
 Answers `status` from status-playing-file.txt, logging each verb it is
 sent, one a line, to <socket>.log. With `watch`, a watch connection is
 kept open; one second after the first watcher comes, status becomes
 status-paused.txt and the watchers are told "state". With `nowatch`,
 watch is refused as a daemon too old for it would: "err unknown verb".
-Runs until killed."""
+`version` is answered with <version reply>, e.g. "ok mediamaster 0.1.0
+abi 3". Runs until killed."""
 import os, socket, sys, threading, time
 
-path, fixtures, mode = sys.argv[1:4]
+path, fixtures, mode, version = sys.argv[1:5]
 read = lambda name: open(os.path.join(fixtures, name), "rb").read()
 status = [read("status-playing-file.txt")]
 watchers = []
@@ -66,7 +67,7 @@ def serve(c):
                 threading.Thread(target=later, daemon=True).start()
         return  # kept open
     with lock:
-        reply = status[0] if argv[0] == "status" else b"ok fake\n" if argv[0] == "version" else b"ok\n"
+        reply = status[0] if argv[0] == "status" else (version + "\n").encode() if argv[0] == "version" else b"ok\n"
     c.sendall(reply)
     c.close()
 

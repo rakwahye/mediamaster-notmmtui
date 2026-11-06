@@ -53,7 +53,7 @@ double strip_decode_time(size_t n) { return SETTLE_FIRST + SETTLE_EACH * (double
 
 int strip_needs_frames(const struct strip_model *m)
 {
-	if (!m->daemon || m->msg[0]) return 0;
+	if (!m->daemon || m->msg[0] || m->refused[0]) return 0;
 	if (m->st.state == TUI_PAUSED) return 1;
 	if (m->st.state != TUI_PLAYING) return 0;
 	return strip_look_moves(m->look) || m->decode < STRIP_SETTLED;
@@ -207,6 +207,10 @@ static int say(struct pen *p, int role, int x, const char *s, int end)
 static void row(struct pen *p, const struct strip_model *m, unsigned cols)
 {
 	const struct theme *t = p->t;
+	if (m->refused[0]) {
+		say(p, TH_ORANGE, 0, m->refused, (int)cols);
+		return;
+	}
 	if (m->msg[0]) {
 		say(p, TH_ORANGE, 0, m->msg, (int)cols);
 		return;

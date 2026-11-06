@@ -71,9 +71,16 @@ ifneq ($(shell $(PC) --atleast-version=3.0 $(NC_PC) 2>/dev/null && echo 1),1)
           Install notcurses with its headers, or set PKG_CONFIG_PATH to the directory of $(NC_PC).pc)
 endif
 
+# The daemon this was built for: its ABI, from the pinned host's header.
+# At start, notmmtui refuses a daemon that says another (version.c).
+DAEMON_ABI := $(shell sed -n 's/^\#define MM_ABI \([0-9]*\).*/\1/p' $(MM)/include/mm_plugin.h)
+ifeq ($(DAEMON_ABI),)
+  $(error no MM_ABI in $(MM)/include/mm_plugin.h)
+endif
+
 # A client, like mmctl: C11, plain C99 style.
 TUI_CFLAGS := -std=c11 $(WARN) $(OPT) $(SAN_FLAGS) -D_GNU_SOURCE -Isrc -I$(MM)/src/host \
-              -DTUI_VERSION=\"$(VERSION)\" $(shell $(PC) --cflags $(NC_PC))
+              -DTUI_VERSION=\"$(VERSION)\" -DTUI_DAEMON_ABI=$(DAEMON_ABI) $(shell $(PC) --cflags $(NC_PC))
 TUI_LIBS   := $(SAN_FLAGS) $(shell $(PC) --libs $(NC_PC)) -lm
 
 SRC  := $(wildcard src/*.c)

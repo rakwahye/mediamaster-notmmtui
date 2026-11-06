@@ -14,6 +14,11 @@ n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits.
 it in a short terminal or pane; it fills what it is given. It follows the
 daemon through `watch`, and reconnects when the daemon restarts.
 
+Daemon: it talks to mediamaster over its socket and nothing else. Built
+against the pinned host, it refuses a daemon of another ABI (its
+`version` says which): on start it exits, while running the strip says
+so until a daemon it fits comes back. `mm-update` rebuilds both together.
+
 Socket: `--socket <path>`, else `$MM_SOCK`, else the daemon's default,
 as `mmctl` finds it; for a daemon started with `-o host.socket=<path>`:
 

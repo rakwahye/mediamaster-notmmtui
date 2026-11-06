@@ -118,6 +118,20 @@ static int watch(void)
 	return 0;
 }
 
+static int version(void)
+{
+	struct tui_version v;
+	CHECK(tui_version_read("mediamaster 0.1.0 abi 3", &v) == 0 && !strcmp(v.name, "mediamaster") &&
+	      !strcmp(v.version, "0.1.0") && v.abi == 3, "the daemon's version");
+	CHECK(tui_version_read("mediamaster 0.2.0 abi 12\n", &v) == 0 && v.abi == 12, "a newline after");
+	CHECK(tui_version_read("fake", &v) == -1, "not a version");
+	CHECK(tui_version_read("mediamaster 0.1.0", &v) == -1, "no abi");
+	CHECK(tui_version_read("mediamaster 0.1.0 api 3", &v) == -1, "not abi");
+	CHECK(tui_version_read("mediamaster 0.1.0 abi 3 extra", &v) == -1, "something after");
+	CHECK(tui_version_read("mediamaster 0.1.0 abi 0", &v) == -1, "abi 0");
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	s_dir = argc > 1 ? argv[1] : "tests/fixtures";
@@ -125,5 +139,6 @@ int main(int argc, char **argv)
 	RUN(queue);
 	RUN(items);
 	RUN(watch);
+	RUN(version);
 	CHECK_PASS("test-reply");
 }
