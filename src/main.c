@@ -3,14 +3,14 @@
  * @brief notmmtui: a strip of a player for the mediamaster daemon.
  *
  *   notmmtui [--socket <path>] [--theme powerlines|plain|<file>]
- *            [--look powerline|plain]
+ *            [--look powerline|plasma|plain]
  *                        the strip, in the whole terminal (make it short)
  *   notmmtui [--socket <path>] --version
  *                        this client's version and the daemon's
  *
  * Socket: --socket, else $MM_SOCK, else the daemon's default, as mmctl. 
  *
- * Keys: the transport keys (keys.h), q quits.
+ * Keys: the transport keys (keys.h), l the next look, q quits.
  *
  * It follows the daemon through a `watch` connection: status is read
  * again when a line says something changed, and every RESYNC_MS anyway;
@@ -44,7 +44,7 @@
 static void usage(FILE *f)
 {
 	fputs("usage: notmmtui [--socket <path>] [--theme powerlines|plain|<file>]\n"
-	      "                [--look powerline|plain]\n"
+	      "                [--look powerline|plasma|plain]\n"
 	      "       notmmtui [--socket <path>] --version\n"
 	      "socket: --socket, else $MM_SOCK, else the daemon's default\n", f);
 }
@@ -186,6 +186,8 @@ static int run(const struct theme *theme, int look)
 	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS };
 	struct timespec msg_until = { 0, 0 };
 	int dirty = 1, need_status = 1, quit = 0;
+	struct timespec frame_at;
+	clock_gettime(CLOCK_MONOTONIC, &frame_at);
 
 	while (!quit) {
 		keep_watching(&f, &need_status);
@@ -205,6 +207,14 @@ static int run(const struct theme *theme, int look)
 			m.bar = bar;
 			dirty = 1;
 		}
+		/* a look that moves: its clock runs while playing, one frame a wake */
+		int moving = strip_look_moves(m.look) && m.daemon && m.st.state == TUI_PLAYING;
+		double dt = since(&frame_at);
+		clock_gettime(CLOCK_MONOTONIC, &frame_at);
+		if (moving) {
+			m.anim += dt > 0.5 ? 0.5 : dt;
+			dirty = 1;
+		}
 		if (m.msg[0] && past(&msg_until)) {
 			m.msg[0] = '\0';
 			dirty = 1;
@@ -216,7 +226,7 @@ static int run(const struct theme *theme, int look)
 		}
 
 		struct pollfd pf[2] = { { infd, POLLIN, 0 }, { f.w.fd, POLLIN, 0 } };
-		if (poll(pf, f.w.fd >= 0 ? 2 : 1, TICK_MS) < 0 && errno != EINTR) break;
+		if (poll(pf, f.w.fd >= 0 ? 2 : 1, moving ? STRIP_FRAME_MS : TICK_MS) < 0 && errno != EINTR) break;
 
 		ncinput ni;
 		uint32_t k;
@@ -230,6 +240,9 @@ static int run(const struct theme *theme, int look)
 				dirty = 1;
 			} else if (k == 'q' && ncinput_nomod_p(&ni)) {
 				quit = 1;
+			} else if (k == 'l' && ncinput_nomod_p(&ni)) {
+				m.look = (m.look + 1) % STRIP_LOOKS;
+				dirty = 1;
 			} else if ((cargc = keys_command(k, &ni, cargv, buf)) > 0) {
 				command(cargc, cargv, &m, &msg_until);
 				need_status = dirty = 1; /* show the result now */
@@ -264,11 +277,9 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "--version")) {
 			want_version = 1;
 		} else if (!strcmp(a, "--look") && i + 1 < argc) {
-			const char *l = argv[++i];
-			if (!strcmp(l, "powerline")) look = STRIP_POWERLINE;
-			else if (!strcmp(l, "plain")) look = STRIP_PLAIN;
-			else {
-				fprintf(stderr, "notmmtui: no look %s (powerline, plain)\n", l);
+			look = strip_look_find(argv[++i]);
+			if (look < 0) {
+				fprintf(stderr, "notmmtui: no look %s (powerline, plasma, plain)\n", argv[i]);
 				return 2;
 			}
 		} else if ((!strcmp(a, "--socket") || !strcmp(a, "--theme")) && i + 1 < argc) {

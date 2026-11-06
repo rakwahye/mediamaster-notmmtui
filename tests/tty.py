@@ -18,6 +18,8 @@ Steps, in order:
                   until the cell at column x of the top row has that background
     brighter:<x1>,<x2>
                   until the top row's background is brighter at x1 than at x2
+    moving:<x>    until the top row's cell at x changes colour
+    still:<x>,<s> for s seconds, the top row's cell at x keeps its colours
     legible:<s>   for s seconds, every letter on screen stands out from its
                   own background (contrast at least 1.5:1, where both are known)
 
@@ -257,6 +259,21 @@ for st in steps:
             0.2126 * int(h[0:2], 16) + 0.7152 * int(h[2:4], 16) + 0.0722 * int(h[4:6], 16)
         until(lambda: lum(screen.b[0][a]) > lum(screen.b[0][b]),
               st + " (%s vs %s)" % (screen.b[0][a], screen.b[0][b]))
+    elif kind == "moving":
+        x = int(arg)
+        first = (screen.f[0][x], screen.b[0][x])
+        until(lambda: (screen.f[0][x], screen.b[0][x]) != first, st + " (stays %s on %s)" % first)
+    elif kind == "still":
+        x, secs = arg.split(",")
+        x = int(x)
+        first = (screen.f[0][x], screen.b[0][x])
+        end = time.time() + float(secs)
+        while time.time() < end:
+            pump(0.02)
+            if (screen.f[0][x], screen.b[0][x]) != first:
+                sys.stderr.write("tty.py: %s: went from %s to %s\n" % (st, first, (screen.f[0][x], screen.b[0][x])))
+                os.kill(pid, 9)
+                sys.exit(1)
     elif kind == "legible":
         end = time.time() + float(arg)
         while time.time() < end:

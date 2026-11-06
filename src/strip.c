@@ -16,6 +16,7 @@
 #define UNLIT     0.14
 #define GLOW      0.55 /* the playhead's glow toward fg, at its peak */
 #define BRIGHT    0.55 /* luma above which text is inked dark */
+#define PLASMA_PAUSE 0.45 /* how bright plasma stays while paused */
 
 struct strip {
 	struct ncplane *base, *text;
@@ -27,6 +28,21 @@ void strip_clock(char *buf, size_t cap, double s)
 	if (t >= 3600) snprintf(buf, cap, "%lu:%02lu:%02lu", t / 3600, t / 60 % 60, t % 60);
 	else snprintf(buf, cap, "%lu:%02lu", t / 60, t % 60);
 }
+
+static const char *const LOOK[STRIP_LOOKS] = {
+	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_PLAIN] = "plain",
+};
+
+const char *strip_look_name(int look) { return look >= 0 && look < STRIP_LOOKS ? LOOK[look] : "?"; }
+
+int strip_look_find(const char *name)
+{
+	for (int l = 0; l < STRIP_LOOKS; l++)
+		if (!strcmp(name, LOOK[l])) return l;
+	return -1;
+}
+
+int strip_look_moves(int look) { return look == STRIP_PLASMA; }
 
 /* ------------------------------------------------------------------ colour */
 
@@ -64,6 +80,16 @@ uint32_t strip_sky(const struct theme *t, double x)
 	return rgb_mix(v, c, (x - 0.55) / 0.45);
 }
 
+uint32_t strip_plasma(const struct theme *t, double x, double y, double time)
+{
+	double u = x / 4.0, w = y * 1.1;
+	double v = sin(u + time * 1.9) + sin(u * 0.7 + w - time * 1.3) +
+	           sin(sqrt(u * u * 0.08 + w * w + 1.0) * 2.0 - time * 2.6) + sin(u * 0.33 - w + time);
+	v = (v + 4.0) / 8.0; /* 0..1 */
+	double hue = fmod(v * 1.6 + time * 0.04, 1.0);
+	return rgb_mix((uint32_t)t->c[TH_BG], strip_sky(t, hue), 0.30 + 0.62 * v);
+}
+
 uint32_t strip_ink(const struct theme *t, uint32_t under)
 {
 	return luma(under) > BRIGHT ? (uint32_t)t->c[TH_BG] : (uint32_t)t->c[TH_FG];
@@ -86,10 +112,15 @@ struct pen {
 	const struct theme *t;
 	int role;
 	const uint32_t *lit; /* per column: the lit colour under it, 0 = not lit; NULL in plain */
+	int veil;            /* letters sit on the theme's bg blended over what is below */
 };
 
 static void pen_at(const struct pen *p, int x)
 {
+	if (p->veil) {
+		ncplane_set_bg_rgb(p->n, (uint32_t)p->t->c[TH_BG]);
+		ncplane_set_bg_alpha(p->n, NCALPHA_BLEND);
+	}
 	if (p->lit && p->lit[x]) ncplane_set_fg_rgb(p->n, strip_ink(p->t, p->lit[x]));
 	else if (p->t->c[p->role] == THEME_DEFAULT) ncplane_set_fg_default(p->n);
 	else ncplane_set_fg_rgb(p->n, (uint32_t)p->t->c[p->role]);
@@ -250,6 +281,35 @@ static void powerline_ground(struct ncplane *n, const struct strip_model *m, con
 	}
 }
 
+/* Plasma behind what has played (all of the row when live), dots ahead.
+ * lit[x] gets what a letter's veil will blend to, for its ink. */
+static void plasma_ground(struct ncplane *n, const struct strip_model *m, const struct theme *t,
+                          unsigned rows, unsigned cols, uint32_t *lit)
+{
+	plain_ground(n, t, rows, cols);
+	uint32_t bg = (uint32_t)t->c[TH_BG];
+	int going = m->daemon && m->st.state != TUI_STOPPED && !m->msg[0];
+	int upto = !going ? 0 : m->bar < 0 ? (int)cols : (m->bar + 4) / 8;
+	double k = m->st.state == TUI_PAUSED ? PLASMA_PAUSE : 1.0;
+	for (unsigned x = 0; x < cols; x++) {
+		lit[x] = 0;
+		if ((int)x >= upto) {
+			if (x % 3 == 2 && going) {
+				ncplane_set_bg_rgb(n, bg);
+				ncplane_set_fg_rgb(n, (uint32_t)t->c[TH_DIM]);
+				ncplane_putstr_yx(n, 0, (int)x, "·");
+			}
+			continue;
+		}
+		uint32_t top = rgb_mix(bg, strip_plasma(t, x, 0, m->anim), k);
+		uint32_t low = rgb_mix(bg, strip_plasma(t, x, 1, m->anim), k);
+		ncplane_set_fg_rgb(n, top);
+		ncplane_set_bg_rgb(n, low);
+		ncplane_putstr_yx(n, 0, (int)x, "▀");
+		lit[x] = rgb_mix(low, bg, 0.5); /* the veil over it */
+	}
+}
+
 /* ------------------------------------------------------------------ strip */
 
 struct strip *strip_new(struct ncplane *base)
@@ -290,16 +350,16 @@ void strip_draw(struct strip *s, const struct strip_model *m, const struct theme
 	ncplane_erase(s->base);
 	ncplane_set_styles(s->base, NCSTYLE_NONE);
 	uint32_t *lit = NULL;
-	if (m->look == STRIP_POWERLINE && has_colours(t)) {
-		lit = calloc(cols, sizeof(*lit));
-		if (lit) powerline_ground(s->base, m, t, rows, cols, lit);
-	}
-	if (!lit) plain_ground(s->base, t, rows, cols);
+	int look = has_colours(t) ? m->look : STRIP_PLAIN;
+	if (look != STRIP_PLAIN) lit = calloc(cols, sizeof(*lit));
+	if (lit && look == STRIP_POWERLINE) powerline_ground(s->base, m, t, rows, cols, lit);
+	else if (lit && look == STRIP_PLASMA) plasma_ground(s->base, m, t, rows, cols, lit);
+	else plain_ground(s->base, t, rows, cols);
 
 	ncplane_erase(s->text);
 	ncplane_set_styles(s->text, NCSTYLE_NONE);
 	ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
-	struct pen p = { .n = s->text, .t = t, .lit = lit };
+	struct pen p = { .n = s->text, .t = t, .lit = lit, .veil = lit && look == STRIP_PLASMA };
 	row(&p, m, cols);
 	free(lit);
 }

@@ -16,6 +16,11 @@
  *              magenta, violet, cyan) lit up to the playhead, dark after
  *              it, the playhead to an eighth of a cell with a glow on it.
  *              Text on the lit part is inked to read against it.
+ *   plasma     plasma in the sky's colours, two pixels to a row (upper
+ *              half blocks), moving behind what has played; faint dots
+ *              ahead; the whole row when live. Text sits on a veil the
+ *              plasma shows through (NCALPHA_BLEND). It animates: the
+ *              caller redraws every STRIP_FRAME_MS while it plays.
  *
  * A theme with no colours of its own (plain) is drawn in the plain look. */
 
@@ -29,7 +34,18 @@
 
 struct ncplane;
 
-enum strip_look { STRIP_PLAIN, STRIP_POWERLINE };
+enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_PLAIN, STRIP_LOOKS };
+
+#define STRIP_FRAME_MS 66 /* about 15 frames a second, for a look that moves */
+
+/** "powerline", "plasma", "plain". */
+const char *strip_look_name(int look);
+
+/** The look named `name`, or -1. */
+int strip_look_find(const char *name);
+
+/** Whether `look` moves while playing (and needs frames, not ticks). */
+int strip_look_moves(int look);
 
 /** What the strip shows; the main loop fills it from the daemon. */
 struct strip_model {
@@ -39,6 +55,7 @@ struct strip_model {
 	double pos;            /* position to show, whole seconds (counted on between reads) */
 	int bar;               /* playhead in eighths of a cell (strip_bar), -1 for none */
 	int look;              /* enum strip_look */
+	double anim;           /* s of animation: runs while playing, stands still paused */
 };
 
 struct strip;
@@ -58,6 +75,9 @@ int strip_bar(unsigned cols, double pos, double duration);
 /** The sky gradient at t (0 left .. 1 right): orange, magenta, violet,
  * cyan from the theme. */
 uint32_t strip_sky(const struct theme *t, double x);
+
+/** The plasma at (x, y) pixels and time t s: a colour of the sky. */
+uint32_t strip_plasma(const struct theme *t, double x, double y, double time);
 
 /** Text colour that reads on `under`: the theme's bg on a bright cell,
  * its fg otherwise. */

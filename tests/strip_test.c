@@ -35,10 +35,28 @@ static int ink(void)
 	return 0;
 }
 
+static int plasma(void)
+{
+	const struct theme *t = &theme_powerlines;
+	CHECK(strip_plasma(t, 10, 0, 1.0) == strip_plasma(t, 10, 0, 1.0), "the same place and time, the same colour");
+	int moved = 0, varied = 0;
+	for (int x = 0; x < 40; x++) {
+		moved += strip_plasma(t, x, 0, 1.0) != strip_plasma(t, x, 0, 1.5);
+		varied += strip_plasma(t, x, 0, 1.0) != strip_plasma(t, x + 1, 0, 1.0);
+	}
+	CHECK(moved > 30, "it moves with time");
+	CHECK(varied > 30, "and varies across the row");
+	CHECK(strip_look_find("plasma") == STRIP_PLASMA && strip_look_find("x") == -1 &&
+	      !strcmp(strip_look_name(STRIP_POWERLINE), "powerline"), "look names");
+	CHECK(strip_look_moves(STRIP_PLASMA) && !strip_look_moves(STRIP_POWERLINE), "plasma moves, powerline not");
+	return 0;
+}
+
 int main(void)
 {
 	RUN(bar);
 	RUN(sky);
 	RUN(ink);
+	RUN(plasma);
 	CHECK_PASS("test-strip");
 }

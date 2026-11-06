@@ -131,6 +131,12 @@ $TTY 1 60 "$TUI" 'wait:sine:440:30' 'legible:3.5' key:q || fail "powerline: text
 $TTY 1 60 "$TUI --theme plain" 'wait:sine:440:30' 'bgat:2=default' 'bgat:57=default' key:q ||
 	fail "powerline with a theme of no colours is drawn plain"
 if "$TUI" --look nosuch 2>/dev/null; then fail "an unknown look should fail"; fi
+# plasma: moving behind what has played, still when paused; dots ahead; l cycles looks
+"$MMCTL" seek 15 >/dev/null
+$TTY 1 60 "$TUI --look plasma" 'wait:sine:440:30' 'moving:20' 'legible:1.5' 'color:·=3a3f5c' \
+	'key: ' 'wait:‖' 'sleep:0.3' 'still:20,1' 'key: ' 'moving:20' key:q || fail "plasma"
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'brighter:2,57' 'key:l' 'wait:·' 'moving:20' 'key:l' 'gone:·' \
+	'bgat:2=05060e' 'key:l' 'brighter:2,57' key:q || fail "l: powerline, plasma, plain, powerline"
 "$MMCTL" play sine:440:30 >/dev/null # from the start again for what follows
 MM_SOCK="$T/nowhere.sock" $TTY 1 60 "$TUI --socket $MM_SOCK" 'wait:sine:440:30' key:q || fail "strip: --socket"
 $TTY 1 60 "$TUI --theme plain" 'wait:sine:440:30' 'color:▶=default' 'color:sine:440:30=default' key:q ||

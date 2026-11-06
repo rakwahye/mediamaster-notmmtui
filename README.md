@@ -7,8 +7,10 @@ everything it shows comes from the daemon's socket.
 
 One row: what plays and its time. In the default look, `--look powerline`,
 the row is the progress bar: the sky gradient lit up to the playhead, dark
-after it; `--look plain` draws it on the theme's background. Keys: space toggles,
-n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, q quits. Run
+after it. `--look plasma`: plasma moving behind what has played, still when
+paused. `--look plain` draws it on the theme's background. `l` switches
+between them as it runs. Keys: space toggles,
+n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits. Run
 it in a short terminal or pane; it fills what it is given. It follows the
 daemon through `watch`, and reconnects when the daemon restarts.
 
