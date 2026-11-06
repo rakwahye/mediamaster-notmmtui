@@ -3,6 +3,7 @@
  * @brief notmmtui: a strip of a player for the mediamaster daemon.
  *
  *   notmmtui [--socket <path>] [--theme powerlines|plain|<file>]
+ *            [--look powerline|plain]
  *                        the strip, in the whole terminal (make it short)
  *   notmmtui [--socket <path>] --version
  *                        this client's version and the daemon's
@@ -43,6 +44,7 @@
 static void usage(FILE *f)
 {
 	fputs("usage: notmmtui [--socket <path>] [--theme powerlines|plain|<file>]\n"
+	      "                [--look powerline|plain]\n"
 	      "       notmmtui [--socket <path>] --version\n"
 	      "socket: --socket, else $MM_SOCK, else the daemon's default\n", f);
 }
@@ -150,16 +152,16 @@ static void keep_watching(struct follow *f, int *need_status)
 	}
 }
 
-/* The position to show: counted on from the last status while playing. */
+/* The position now: counted on from the last status while playing. */
 static double shown_position(const struct strip_model *m, const struct follow *f)
 {
 	double p = m->st.position;
 	if (m->daemon && m->st.state == TUI_PLAYING) p += since(&f->read_at);
 	if (m->st.duration > 0 && p > m->st.duration) p = m->st.duration;
-	return floor(p);
+	return p;
 }
 
-static int run(const struct theme *theme)
+static int run(const struct theme *theme, int look)
 {
 	struct notcurses_options opts = {
 		.flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_INHIBIT_SETLOCALE,
@@ -172,8 +174,15 @@ static int run(const struct theme *theme)
 	}
 	struct ncplane *std = notcurses_stdplane(nc);
 	int infd = notcurses_inputready_fd(nc);
+	struct strip *strip = strip_new(std);
+	if (!strip) {
+		notcurses_stop(nc);
+		fputs("notmmtui: cannot make the strip's planes\n", stderr);
+		return 1;
+	}
 	struct strip_model m;
 	memset(&m, 0, sizeof(m));
+	m.look = look;
 	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS };
 	struct timespec msg_until = { 0, 0 };
 	int dirty = 1, need_status = 1, quit = 0;
@@ -188,8 +197,12 @@ static int run(const struct theme *theme)
 			need_status = 0;
 		}
 		double pos = shown_position(&m, &f);
-		if (pos != m.pos) {
-			m.pos = pos;
+		unsigned rows, cols;
+		ncplane_dim_yx(std, &rows, &cols);
+		int bar = strip_bar(cols, pos, m.st.duration);
+		if (floor(pos) != m.pos || bar != m.bar) { /* the clock, or the bar by an eighth */
+			m.pos = floor(pos);
+			m.bar = bar;
 			dirty = 1;
 		}
 		if (m.msg[0] && past(&msg_until)) {
@@ -197,7 +210,7 @@ static int run(const struct theme *theme)
 			dirty = 1;
 		}
 		if (dirty) {
-			strip_draw(std, &m, theme);
+			strip_draw(strip, &m, theme);
 			notcurses_render(nc);
 			dirty = 0;
 		}
@@ -232,6 +245,7 @@ static int run(const struct theme *theme)
 		}
 	}
 	tui_watch_close(&f.w);
+	strip_free(strip);
 	notcurses_stop(nc);
 	return 0;
 }
@@ -241,7 +255,7 @@ int main(int argc, char **argv)
 	setlocale(LC_ALL, "");
 	struct theme theme = theme_powerlines;
 	const char *theme_name = NULL;
-	int want_version = 0;
+	int want_version = 0, look = STRIP_POWERLINE;
 	for (int i = 1; i < argc; i++) {
 		const char *a = argv[i];
 		if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
@@ -249,6 +263,14 @@ int main(int argc, char **argv)
 			return 0;
 		} else if (!strcmp(a, "--version")) {
 			want_version = 1;
+		} else if (!strcmp(a, "--look") && i + 1 < argc) {
+			const char *l = argv[++i];
+			if (!strcmp(l, "powerline")) look = STRIP_POWERLINE;
+			else if (!strcmp(l, "plain")) look = STRIP_PLAIN;
+			else {
+				fprintf(stderr, "notmmtui: no look %s (powerline, plain)\n", l);
+				return 2;
+			}
 		} else if ((!strcmp(a, "--socket") || !strcmp(a, "--theme")) && i + 1 < argc) {
 			if (a[2] == 's') {
 				/* read by mm_paths_socket on first use, which is after this */
@@ -273,5 +295,5 @@ int main(int argc, char **argv)
 			return 2;
 		}
 	}
-	return run(&theme);
+	return run(&theme, look);
 }

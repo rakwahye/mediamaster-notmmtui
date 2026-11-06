@@ -113,17 +113,30 @@ echo "$st" | grep -qx 'volume: 55' || fail "keys: + is volume +5: $st"
 pos=$(echo "$st" | sed -n 's/^position: //p')
 [ "${pos%%.*}" -ge 5 ] || fail "keys: right arrow seeks +5 s, at $pos"
 $TTY 1 60 "$TUI" 'wait:sine:440:30' 'key:s' 'wait:stopped' 'key:n' 'wait:next:' key:q || fail "strip: stop, and an error shown"
-"$MMCTL" play sine:440 >/dev/null # live: a seek is refused, and the strip says so
+"$MMCTL" play sine:440 >/dev/null # live: no bar; a seek is refused, and the strip says so
+$TTY 1 60 "$TUI" 'wait:live' 'color:live=c6ff3a' key:q || fail "powerline: live"
 $TTY 1 60 "$TUI" 'wait:sine:440' 'key:[C' 'wait:seek:' 'gone:seek:' key:q || fail "strip: a refused seek, shown for a while"
 # themes: powerlines by default, plain, a file over powerlines
 "$MMCTL" play sine:440:30 >/dev/null
-$TTY 1 60 "$TUI" 'wait:sine:440:30' 'color:▶=ff2bd6' 'color:sine:440:30=e6f0ff' 'color:0:0=19d3ff' \
-	'color:/ 0:30=3a3f5c' 'key: ' 'color:‖=ff7a1a' 'key: ' key:q || fail "theme powerlines"
+$TTY 1 60 "$TUI --look plain" 'wait:sine:440:30' 'color:▶=ff2bd6' 'color:sine:440:30=e6f0ff' \
+	'color:0:0=19d3ff' 'color:/ 0:30=3a3f5c' 'bgat:2=05060e' 'bgat:57=05060e' 'key: ' 'color:‖=ff7a1a' 'key: ' \
+	key:q || fail "theme powerlines, plain look"
+
+# powerline (the default look): the row is the bar, lit to the playhead
+"$MMCTL" seek 15 >/dev/null
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'brighter:2,57' 'brighter:28,32' 'color:sine:440:30=e6f0ff' \
+	'color:/ 0:30=3a3f5c' key:q || fail "powerline: lit to half way, text inked on the lit part"
+"$MMCTL" play sine:440:30 >/dev/null # the playhead passes under the title: it stays legible
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'legible:3.5' key:q || fail "powerline: text over the playhead"
+$TTY 1 60 "$TUI --theme plain" 'wait:sine:440:30' 'bgat:2=default' 'bgat:57=default' key:q ||
+	fail "powerline with a theme of no colours is drawn plain"
+if "$TUI" --look nosuch 2>/dev/null; then fail "an unknown look should fail"; fi
+"$MMCTL" play sine:440:30 >/dev/null # from the start again for what follows
 MM_SOCK="$T/nowhere.sock" $TTY 1 60 "$TUI --socket $MM_SOCK" 'wait:sine:440:30' key:q || fail "strip: --socket"
 $TTY 1 60 "$TUI --theme plain" 'wait:sine:440:30' 'color:▶=default' 'color:sine:440:30=default' key:q ||
 	fail "theme plain"
 printf '# mine\nmagenta = #00ff00\n' >"$T/theme"
-$TTY 1 60 "$TUI --theme $T/theme" 'wait:sine:440:30' 'color:▶=00ff00' 'color:0:0=19d3ff' key:q ||
+$TTY 1 60 "$TUI --look plain --theme $T/theme" 'wait:sine:440:30' 'color:▶=00ff00' 'color:0:0=19d3ff' key:q ||
 	fail "theme file"
 printf 'magenta = green\n' >"$T/theme"
 out=$("$TUI" --theme "$T/theme" 2>&1) && fail "a bad theme file should fail"

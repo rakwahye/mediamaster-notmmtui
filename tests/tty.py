@@ -14,6 +14,12 @@ Steps, in order:
     show:         print the screen to stderr
     color:<text>=<rrggbb|default>
                   until the first cell of <text> on screen has that foreground
+    bgat:<x>=<rrggbb|default>
+                  until the cell at column x of the top row has that background
+    brighter:<x1>,<x2>
+                  until the top row's background is brighter at x1 than at x2
+    legible:<s>   for s seconds, every letter on screen stands out from its
+                  own background (contrast at least 1.5:1, where both are known)
 
 Then it waits for the program to exit and exits with its status. On a
 step that times out it prints the screen text and exits 1.
@@ -21,8 +27,8 @@ step that times out it prints the screen text and exits 1.
 The pty answers Notcurses' startup queries as foot would (version,
 cursor position, device attributes), so it starts without a real
 terminal. What it shows is rebuilt by a small VT interpreter (cursor
-moves, erases, repeat, foreground colour), since Notcurses writes only
-the cells that changed."""
+moves, erases, repeat, colours), since Notcurses writes only the
+cells that changed."""
 import codecs, shlex, fcntl, os, pty, re, select, signal, struct, sys, termios, time, unicodedata
 
 rows, cols, prog, steps = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4:]
@@ -61,34 +67,45 @@ def pump(timeout):
 class Screen:
     def __init__(self, r, c):
         self.fg = None  # None: the terminal's default; else "rrggbb"
+        self.bg = None
         self.resize(r, c)
         self.y = self.x = 0
         self.last = " "
 
     def resize(self, r, c):
-        old, oldfg = getattr(self, "g", []), getattr(self, "f", [])
+        old, oldfg, oldbg = getattr(self, "g", []), getattr(self, "f", []), getattr(self, "b", [])
         self.r, self.c = r, c
         self.g = [[" "] * c for _ in range(r)]
         self.f = [[None] * c for _ in range(r)]
+        self.b = [[None] * c for _ in range(r)]
         for y, row in enumerate(old[:r]):
             for x, ch in enumerate(row[:c]):
                 self.g[y][x] = ch
                 self.f[y][x] = oldfg[y][x]
+                self.b[y][x] = oldbg[y][x]
 
     def sgr(self, params):
         p = [int(v) if v.isdigit() else 0 for v in re.split("[;:]", params)] if params else [0]
         i = 0
         while i < len(p):
-            if p[i] in (0, 39):
+            if p[i] == 0:
+                self.fg = self.bg = None
+            elif p[i] == 39:
                 self.fg = None
+            elif p[i] == 49:
+                self.bg = None
+            elif p[i] == 48 and i + 4 < len(p) and p[i + 1] == 2:
+                self.bg = "%02x%02x%02x" % (p[i + 2], p[i + 3], p[i + 4])
+                i += 4
             elif p[i] == 38 and i + 4 < len(p) and p[i + 1] == 2:
                 self.fg = "%02x%02x%02x" % (p[i + 2], p[i + 3], p[i + 4])
                 i += 4
             elif p[i] == 38 and i + 2 < len(p) and p[i + 1] == 5:
                 self.fg = "idx%d" % p[i + 2]
                 i += 2
-            elif p[i] == 48 and i + 1 < len(p):
-                i += 4 if p[i + 1] == 2 else 2
+            elif p[i] == 48 and i + 2 < len(p) and p[i + 1] == 5:
+                self.bg = "idx%d" % p[i + 2]
+                i += 2
             i += 1
 
     def put(self, ch):
@@ -99,6 +116,7 @@ class Screen:
             self.x, self.y = 0, min(self.y + 1, self.r - 1)
         self.g[self.y][self.x] = ch
         self.f[self.y][self.x] = self.fg
+        self.b[self.y][self.x] = self.bg
         if w == 2 and self.x + 1 < self.c:
             self.g[self.y][self.x + 1] = ""
         self.x += w
@@ -123,15 +141,18 @@ class Screen:
         elif final == "b":
             for _ in range(a): self.put(self.last)
         elif final == "X":
-            for x in range(self.x, min(self.c, self.x + a)): self.g[self.y][x] = " "
+            for x in range(self.x, min(self.c, self.x + a)):
+                self.g[self.y][x], self.b[self.y][x] = " ", self.bg
         elif final == "K":
             m = n[0] if n else 0
             lo, hi = (self.x, self.c) if m == 0 else (0, self.x + 1) if m == 1 else (0, self.c)
-            for x in range(lo, hi): self.g[self.y][x] = " "
+            for x in range(lo, hi):
+                self.g[self.y][x], self.b[self.y][x] = " ", self.bg
         elif final == "J":
             m = n[0] if n else 0
             rows = range(self.y + 1, self.r) if m == 0 else range(0, self.y) if m == 1 else range(self.r)
-            for y in rows: self.g[y] = [" "] * self.c
+            for y in rows:
+                self.g[y], self.b[y] = [" "] * self.c, [self.bg] * self.c
             if m in (0, 1): self.csi(str(m), "K")
 
     def feed(self, text):
@@ -155,6 +176,24 @@ class Screen:
 
     def text(self):
         return "\n".join("".join(row) for row in self.g)
+
+    def illegible(self):
+        """The first letter whose colour does not stand out from its ground."""
+        def lum(h):
+            c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+            c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+            return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+        for y in range(self.r):
+            for x in range(self.c):
+                ch, f, b = self.g[y][x], self.f[y][x], self.b[y][x]
+                if not ch.strip() or not f or not b or f.startswith("idx") or b.startswith("idx"):
+                    continue
+                if 0x2580 <= ord(ch[0]) <= 0x259f or ord(ch[0]) >= 0x1fb00:  # blocks are ground, not words
+                    continue
+                hi, lo = sorted((lum(f), lum(b)), reverse=True)
+                if (hi + 0.05) / (lo + 0.05) < 1.5:
+                    return (ch, f, b)
+        return None
 
     def color_of(self, needle):
         for y, row in enumerate(self.g):
@@ -208,6 +247,25 @@ for st in steps:
     elif kind == "color":
         want_text, _, want = arg.rpartition("=")
         until(lambda: screen.color_of(want_text) == want, st + " (is %s)" % screen.color_of(want_text))
+    elif kind == "bgat":
+        x, _, want = arg.partition("=")
+        x = int(x)
+        until(lambda: (screen.b[0][x] or "default") == want, st + " (is %s)" % (screen.b[0][x] or "default"))
+    elif kind == "brighter":
+        a, b = (int(v) for v in arg.split(","))
+        lum = lambda h: 0 if not h or not h[0].isalnum() or h.startswith("idx") else \
+            0.2126 * int(h[0:2], 16) + 0.7152 * int(h[2:4], 16) + 0.0722 * int(h[4:6], 16)
+        until(lambda: lum(screen.b[0][a]) > lum(screen.b[0][b]),
+              st + " (%s vs %s)" % (screen.b[0][a], screen.b[0][b]))
+    elif kind == "legible":
+        end = time.time() + float(arg)
+        while time.time() < end:
+            pump(0.02)
+            bad = screen.illegible()
+            if bad:
+                sys.stderr.write("tty.py: %s: %r is %s on %s; screen:\n%s\n" % ((st,) + bad + (text(),)))
+                os.kill(pid, 9)
+                sys.exit(1)
     elif kind == "show":
         sys.stderr.write(text() + "\n")
     elif kind == "sleep":

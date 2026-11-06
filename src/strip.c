@@ -1,13 +1,25 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /** @file strip.c
- * @brief One row: state, title, artist, time. */
+ * @brief One row: state, title, artist, time; plain or as a powerline. */
 
 #include "strip.h"
 #include "paths.h"
+#include <math.h>
 #include <notcurses/notcurses.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+
+#define LIT       0.62 /* how far the played part goes from bg toward the sky */
+#define LIT_PAUSE 0.34
+#define UNLIT     0.14
+#define GLOW      0.55 /* the playhead's glow toward fg, at its peak */
+#define BRIGHT    0.55 /* luma above which text is inked dark */
+
+struct strip {
+	struct ncplane *base, *text;
+};
 
 void strip_clock(char *buf, size_t cap, double s)
 {
@@ -16,30 +28,79 @@ void strip_clock(char *buf, size_t cap, double s)
 	else snprintf(buf, cap, "%lu:%02lu", t / 60, t % 60);
 }
 
-static void ink(struct ncplane *n, const struct theme *t, int role)
+/* ------------------------------------------------------------------ colour */
+
+static uint32_t rgb_mix(uint32_t a, uint32_t b, double k)
 {
-	if (t->c[role] == THEME_DEFAULT) ncplane_set_fg_default(n);
-	else ncplane_set_fg_rgb(n, (uint32_t)t->c[role]);
+	if (k < 0) k = 0;
+	if (k > 1) k = 1;
+	uint32_t o = 0;
+	for (int sh = 0; sh <= 16; sh += 8) {
+		double ca = (a >> sh) & 255, cb = (b >> sh) & 255;
+		o |= (uint32_t)lround(ca + (cb - ca) * k) << sh;
+	}
+	return o;
 }
 
-/* The theme's background under everything, and for what is written. */
-static void ground(struct ncplane *n, const struct theme *t)
+static double luma(uint32_t c)
 {
-	uint64_t ch = 0;
-	if (t->c[TH_BG] == THEME_DEFAULT) ncchannels_set_bg_default(&ch);
-	else ncchannels_set_bg_rgb(&ch, (uint32_t)t->c[TH_BG]);
-	if (t->c[TH_FG] == THEME_DEFAULT) ncchannels_set_fg_default(&ch);
-	else ncchannels_set_fg_rgb(&ch, (uint32_t)t->c[TH_FG]);
-	ncplane_set_base(n, " ", 0, ch);
-	ncplane_set_channels(n, ch);
-	ncplane_set_styles(n, NCSTYLE_NONE);
+	return (0.2126 * (c >> 16 & 255) + 0.7152 * (c >> 8 & 255) + 0.0722 * (c & 255)) / 255.0;
+}
+
+static int has_colours(const struct theme *t)
+{
+	static const int need[] = { TH_BG, TH_FG, TH_ORANGE, TH_MAGENTA, TH_VIOLET, TH_CYAN };
+	for (size_t i = 0; i < sizeof(need) / sizeof(need[0]); i++)
+		if (t->c[need[i]] == THEME_DEFAULT) return 0;
+	return 1;
+}
+
+uint32_t strip_sky(const struct theme *t, double x)
+{
+	uint32_t o = (uint32_t)t->c[TH_ORANGE], m = (uint32_t)t->c[TH_MAGENTA];
+	uint32_t v = (uint32_t)t->c[TH_VIOLET], c = (uint32_t)t->c[TH_CYAN];
+	if (x < 0.18) return rgb_mix(o, m, x / 0.18);
+	if (x < 0.55) return rgb_mix(m, v, (x - 0.18) / 0.37);
+	return rgb_mix(v, c, (x - 0.55) / 0.45);
+}
+
+uint32_t strip_ink(const struct theme *t, uint32_t under)
+{
+	return luma(under) > BRIGHT ? (uint32_t)t->c[TH_BG] : (uint32_t)t->c[TH_FG];
+}
+
+int strip_bar(unsigned cols, double pos, double duration)
+{
+	if (duration <= 0 || !cols) return -1;
+	double f = pos / duration;
+	if (f < 0) f = 0;
+	if (f > 1) f = 1;
+	return (int)lround(f * cols * 8);
+}
+
+/* ------------------------------------------------------------------ text */
+
+/* How text is coloured: its role, or, over a lit cell, inked to read. */
+struct pen {
+	struct ncplane *n;
+	const struct theme *t;
+	int role;
+	const uint32_t *lit; /* per column: the lit colour under it, 0 = not lit; NULL in plain */
+};
+
+static void pen_at(const struct pen *p, int x)
+{
+	if (p->lit && p->lit[x]) ncplane_set_fg_rgb(p->n, strip_ink(p->t, p->lit[x]));
+	else if (p->t->c[p->role] == THEME_DEFAULT) ncplane_set_fg_default(p->n);
+	else ncplane_set_fg_rgb(p->n, (uint32_t)p->t->c[p->role]);
 }
 
 /* Put s at (y, x), no further than column `end`; a cut string ends in
  * "…". Control characters (a tag may hold a tab) show as spaces.
  * @returns the column after the last cell written. */
-static int put_clipped(struct ncplane *n, int y, int x, const char *s, int end)
+static int put_clipped(const struct pen *pn, int y, int x, const char *s, int end)
 {
+	struct ncplane *n = pn->n;
 	mbstate_t ps;
 	memset(&ps, 0, sizeof(ps));
 	int col = x;
@@ -54,12 +115,16 @@ static int put_clipped(struct ncplane *n, int y, int x, const char *s, int end)
 		/* room for this glyph, and for "…" if anything follows it */
 		int need = w + (p[len] ? 1 : 0);
 		if (col + need > end) {
-			if (col < end) ncplane_putstr_yx(n, y, col++, "…");
+			if (col < end) {
+				pen_at(pn, col);
+				ncplane_putstr_yx(n, y, col++, "…");
+			}
 			return col;
 		}
 		char egc[8];
 		memcpy(egc, ctl ? " " : p, ctl ? 1 : len);
 		egc[ctl ? 1 : len] = '\0';
+		pen_at(pn, col);
 		ncplane_putstr_yx(n, y, col, egc);
 		col += w;
 		p += len;
@@ -67,69 +132,174 @@ static int put_clipped(struct ncplane *n, int y, int x, const char *s, int end)
 	return col;
 }
 
-void strip_draw(struct ncplane *n, const struct strip_model *m, const struct theme *t)
+static int say(struct pen *p, int role, int x, const char *s, int end)
 {
-	unsigned rows, cols;
-	ncplane_dim_yx(n, &rows, &cols);
-	ground(n, t);
-	ncplane_erase(n);
-	if (!rows || !cols) return;
+	p->role = role;
+	return put_clipped(p, 0, x, s, end);
+}
 
+/* The row's words, wherever the ground came from. */
+static void row(struct pen *p, const struct strip_model *m, unsigned cols)
+{
+	const struct theme *t = p->t;
 	if (m->msg[0]) {
-		ink(n, t, TH_ORANGE);
-		put_clipped(n, 0, 0, m->msg, (int)cols);
+		say(p, TH_ORANGE, 0, m->msg, (int)cols);
 		return;
 	}
 	if (!m->daemon) {
-		ink(n, t, TH_DIM);
 		char line[300];
 		snprintf(line, sizeof(line), "mediamaster is not running (%s)", mm_paths_socket());
-		put_clipped(n, 0, 0, line, (int)cols);
+		say(p, TH_DIM, 0, line, (int)cols);
 		return;
 	}
 	const struct tui_status *st = &m->st;
 	if (st->state == TUI_STOPPED) {
-		ink(n, t, TH_DIM);
-		put_clipped(n, 0, 0, "■ stopped", (int)cols);
+		say(p, TH_DIM, 0, "■ stopped", (int)cols);
 		return;
 	}
 
+	/* the right side: "live 0:12" or "1:23 / 6:53" */
 	char now[16], dur[16], right[40];
 	strip_clock(now, sizeof(now), m->pos);
-	if (st->duration > 0) {
+	int live = st->duration <= 0;
+	if (live) {
+		snprintf(right, sizeof(right), " live %s", now);
+	} else {
 		strip_clock(dur, sizeof(dur), st->duration);
 		snprintf(right, sizeof(right), " %s / %s", now, dur);
-	} else {
-		snprintf(right, sizeof(right), " %s", now);
 	}
-	int rw = (int)strlen(right);
-	int end = (int)cols - rw;
+	int end = (int)cols - (int)strlen(right);
 	if (end < 4) { /* too narrow for both: the time wins */
-		ink(n, t, TH_CYAN);
-		put_clipped(n, 0, 0, right + 1, (int)cols);
+		say(p, TH_CYAN, 0, now, (int)cols);
 		return;
 	}
 
 	int paused = st->state == TUI_PAUSED;
-	ink(n, t, paused ? TH_ORANGE : TH_MAGENTA);
-	int x = put_clipped(n, 0, 0, paused ? "‖ " : "▶ ", end);
-	ink(n, t, TH_FG);
-	if (t->bold_title) ncplane_set_styles(n, NCSTYLE_BOLD);
-	x = put_clipped(n, 0, x, st->title[0] ? st->title : st->uri, end);
-	ncplane_set_styles(n, NCSTYLE_NONE);
+	int x = say(p, paused ? TH_ORANGE : TH_MAGENTA, 0, paused ? "‖ " : "▶ ", end);
+	if (t->bold_title) ncplane_set_styles(p->n, NCSTYLE_BOLD);
+	x = say(p, TH_FG, x, st->title[0] ? st->title : st->uri, end);
+	ncplane_set_styles(p->n, NCSTYLE_NONE);
 	if (st->artist[0] && x < end - 4) {
-		ink(n, t, TH_DIM);
-		x = put_clipped(n, 0, x, " — ", end);
-		ink(n, t, TH_VIOLET);
-		put_clipped(n, 0, x, st->artist, end);
+		x = say(p, TH_DIM, x, " — ", end);
+		say(p, TH_VIOLET, x, st->artist, end);
 	}
-	/* " now / dur": what has played in cyan, the rest dim */
-	const char *slash = strchr(right, '/');
-	size_t nl = slash ? (size_t)(slash - right) : strlen(right);
-	ink(n, t, TH_CYAN);
-	ncplane_putnstr_yx(n, 0, end, nl, right);
-	if (slash) {
-		ink(n, t, TH_DIM);
-		ncplane_putstr_yx(n, 0, end + (int)nl, slash);
+	if (live) {
+		x = say(p, TH_GREEN, end, " live", (int)cols);
+		say(p, TH_CYAN, x, right + 5, (int)cols);
+	} else { /* what has played in cyan, the rest dim */
+		const char *slash = strchr(right, '/');
+		char head[24];
+		snprintf(head, sizeof(head), "%.*s", (int)(slash - right), right);
+		x = say(p, TH_CYAN, end, head, (int)cols);
+		say(p, TH_DIM, x, slash, (int)cols);
 	}
+}
+
+/* ------------------------------------------------------------------ ground */
+
+static void set_bg(struct ncplane *n, const struct theme *t, int role)
+{
+	if (t->c[role] == THEME_DEFAULT) ncplane_set_bg_default(n);
+	else ncplane_set_bg_rgb(n, (uint32_t)t->c[role]);
+}
+
+static void plain_ground(struct ncplane *n, const struct theme *t, unsigned rows, unsigned cols)
+{
+	set_bg(n, t, TH_BG);
+	for (unsigned y = 0; y < rows; y++)
+		for (unsigned x = 0; x < cols; x++) ncplane_putchar_yx(n, (int)y, (int)x, ' ');
+}
+
+/* The bar across row 0; lit[x] gets the lit colour of each played cell. */
+static void powerline_ground(struct ncplane *n, const struct strip_model *m, const struct theme *t,
+                             unsigned rows, unsigned cols, uint32_t *lit)
+{
+	plain_ground(n, t, rows, cols);
+	uint32_t bg = (uint32_t)t->c[TH_BG], fg = (uint32_t)t->c[TH_FG];
+	int bar = m->daemon && m->st.state != TUI_STOPPED && !m->msg[0] ? m->bar : -1;
+	int full = bar < 0 ? 0 : bar / 8, part = bar < 0 ? 0 : bar % 8;
+	double k = m->st.state == TUI_PAUSED ? LIT_PAUSE : LIT;
+	double head = bar < 0 ? -100 : bar / 8.0;
+	/* The playhead cell, lit `part` eighths from the left. Under half, a
+	 * left block of lit on the dark ground; from half on, the lit ground
+	 * with a right block of dark over the rest, so text there sits on lit,
+	 * as its ink expects (a glyph above hides the block, not the ground). */
+	static const char *const LEFT[4] = { " ", "▏", "▎", "▍" };
+	static const char *const RIGHT[8] = { [4] = "▐", [5] = "\U0001FB88", [6] = "\U0001FB87", [7] = "▕" };
+	for (unsigned x = 0; x < cols; x++) {
+		uint32_t sky = strip_sky(t, (x + 0.5) / cols);
+		uint32_t off = rgb_mix(bg, sky, UNLIT), on = rgb_mix(bg, sky, k);
+		if (m->st.state == TUI_PLAYING) {
+			double d = (x + 0.5) - head;
+			on = rgb_mix(on, fg, exp(-d * d / 3.0) * GLOW);
+		}
+		lit[x] = 0;
+		if ((int)x < full) {
+			ncplane_set_bg_rgb(n, on);
+			ncplane_putchar_yx(n, 0, (int)x, ' ');
+			lit[x] = on;
+		} else if ((int)x == full && part) {
+			ncplane_set_fg_rgb(n, part < 4 ? on : off);
+			ncplane_set_bg_rgb(n, part < 4 ? off : on);
+			ncplane_putstr_yx(n, 0, (int)x, part < 4 ? LEFT[part] : RIGHT[part]);
+			if (part >= 4) lit[x] = on;
+		} else {
+			ncplane_set_bg_rgb(n, off);
+			ncplane_putchar_yx(n, 0, (int)x, ' ');
+		}
+	}
+}
+
+/* ------------------------------------------------------------------ strip */
+
+struct strip *strip_new(struct ncplane *base)
+{
+	struct strip *s = calloc(1, sizeof(*s));
+	if (!s) return NULL;
+	unsigned rows, cols;
+	ncplane_dim_yx(base, &rows, &cols);
+	struct ncplane_options po = { .rows = rows ? rows : 1, .cols = cols ? cols : 1 };
+	s->base = base;
+	s->text = ncplane_create(base, &po);
+	if (!s->text) {
+		free(s);
+		return NULL;
+	}
+	uint64_t clear = 0;
+	ncchannels_set_fg_alpha(&clear, NCALPHA_TRANSPARENT);
+	ncchannels_set_bg_alpha(&clear, NCALPHA_TRANSPARENT);
+	ncplane_set_base(s->text, "", 0, clear);
+	return s;
+}
+
+void strip_free(struct strip *s)
+{
+	if (!s) return;
+	ncplane_destroy(s->text);
+	free(s);
+}
+
+void strip_draw(struct strip *s, const struct strip_model *m, const struct theme *t)
+{
+	unsigned rows, cols, tr, tc;
+	ncplane_dim_yx(s->base, &rows, &cols);
+	if (!rows || !cols) return;
+	ncplane_dim_yx(s->text, &tr, &tc);
+	if (tr != rows || tc != cols) ncplane_resize_simple(s->text, rows, cols);
+
+	ncplane_erase(s->base);
+	ncplane_set_styles(s->base, NCSTYLE_NONE);
+	uint32_t *lit = NULL;
+	if (m->look == STRIP_POWERLINE && has_colours(t)) {
+		lit = calloc(cols, sizeof(*lit));
+		if (lit) powerline_ground(s->base, m, t, rows, cols, lit);
+	}
+	if (!lit) plain_ground(s->base, t, rows, cols);
+
+	ncplane_erase(s->text);
+	ncplane_set_styles(s->text, NCSTYLE_NONE);
+	ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
+	struct pen p = { .n = s->text, .t = t, .lit = lit };
+	row(&p, m, cols);
+	free(lit);
 }
