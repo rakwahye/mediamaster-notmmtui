@@ -18,6 +18,7 @@ violet orange green dim.
     git clone --recursive https://github.com/rakwahye/mediamaster-notmmtui
     make && make test
 
-Needs a C11 compiler and Notcurses 3 (`notcurses-core` and its headers;
-Arch: `notcurses`). `make test` builds the pinned daemon and runs this
+Needs a C11 compiler, pkg-config and Notcurses 3 (`notcurses-core` and its
+headers; Arch: `notcurses`, or a source install under /usr/local, which is
+looked for too). `make test` builds the pinned daemon and runs this
 client against it with a null sink, in a pty driven by python3.

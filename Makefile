@@ -49,16 +49,29 @@ endif
 
 WARN := -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wformat=2
 
-# Notcurses: the core library only (no ffmpeg/OIIO image backend).
-NC_PC := notcurses-core
-ifneq ($(shell pkg-config --atleast-version=3.0 $(NC_PC) && echo 1),1)
-  $(error $(NC_PC) >= 3.0 not found: install notcurses with its headers)
+# Notcurses: the core library only (no ffmpeg/OIIO image backend). A
+# source install goes under /usr/local, which not every pkg-config
+# searches (Arch's does not), so look there too when it is not found.
+NC_PC      := notcurses-core
+PKG_CONFIG ?= pkg-config
+ifeq ($(shell command -v $(PKG_CONFIG)),)
+  $(error $(PKG_CONFIG) not found: install pkgconf (or pkg-config))
+endif
+NC_PCPATH := $(PKG_CONFIG_PATH)
+ifneq ($(shell $(PKG_CONFIG) --exists $(NC_PC) 2>/dev/null && echo 1),1)
+  NC_PCPATH := $(PKG_CONFIG_PATH)$(if $(PKG_CONFIG_PATH),:)/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig
+endif
+PC := PKG_CONFIG_PATH='$(NC_PCPATH)' $(PKG_CONFIG)
+ifneq ($(shell $(PC) --atleast-version=3.0 $(NC_PC) 2>/dev/null && echo 1),1)
+  $(error $(NC_PC) >= 3.0 not found by $(PKG_CONFIG) (searched its own path and /usr/local; \
+          found: $(or $(shell $(PC) --modversion $(NC_PC) 2>/dev/null),nothing)). \
+          Install notcurses with its headers, or set PKG_CONFIG_PATH to the directory of $(NC_PC).pc)
 endif
 
 # A client, like mmctl: C11, plain C99 style.
 TUI_CFLAGS := -std=c11 $(WARN) $(OPT) $(SAN_FLAGS) -D_GNU_SOURCE -Isrc -I$(MM)/src/host \
-              -DTUI_VERSION=\"$(VERSION)\" $(shell pkg-config --cflags $(NC_PC))
-TUI_LIBS   := $(SAN_FLAGS) $(shell pkg-config --libs $(NC_PC)) -lm
+              -DTUI_VERSION=\"$(VERSION)\" $(shell $(PC) --cflags $(NC_PC))
+TUI_LIBS   := $(SAN_FLAGS) $(shell $(PC) --libs $(NC_PC)) -lm
 
 SRC  := $(wildcard src/*.c)
 OBJ  := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(SRC)) $(BUILD)/obj/mm/paths.o
