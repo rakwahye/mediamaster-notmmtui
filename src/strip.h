@@ -22,6 +22,7 @@ struct ncplane;
 struct strip_model {
 	int daemon;            /* 0: nothing answers on the socket */
 	struct tui_status st;  /* valid when daemon */
+	char msg[160];         /* shown instead of the row while set: a command's error */
 };
 
 /** Redraw `n` from `m`. */

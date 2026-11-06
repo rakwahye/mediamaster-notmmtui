@@ -52,6 +52,10 @@ void strip_draw(struct ncplane *n, const struct strip_model *m)
 	ncplane_erase(n);
 	if (!rows || !cols) return;
 
+	if (m->msg[0]) {
+		put_clipped(n, 0, 0, m->msg, (int)cols);
+		return;
+	}
 	if (!m->daemon) {
 		put_clipped(n, 0, 0, "mediamaster is not running", (int)cols);
 		return;

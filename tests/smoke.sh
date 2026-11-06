@@ -72,6 +72,19 @@ if command -v ffmpeg >/dev/null; then # tags: title and artist
 	"$MMCTL" play "$T/tone.flac" >/dev/null
 	$TTY 1 60 "$TUI" 'wait:Tone' 'wait:Osc' 'wait:—' key:q || fail "strip: title and artist"
 fi
+# keys: toggle twice, volume, seek; the daemon says what happened
+"$MMCTL" play sine:440:30 >/dev/null
+"$MMCTL" vol 50 >/dev/null
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'key: ' 'wait:‖' 'key: ' 'wait:▶' 'key:+' 'key:[C' \
+	'sleep:0.3' key:q || fail "strip: keys"
+st=$("$MMCTL" status)
+echo "$st" | grep -qx 'state: playing' || fail "keys: toggled twice is playing: $st"
+echo "$st" | grep -qx 'volume: 55' || fail "keys: + is volume +5: $st"
+pos=$(echo "$st" | sed -n 's/^position: //p')
+[ "${pos%%.*}" -ge 5 ] || fail "keys: right arrow seeks +5 s, at $pos"
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'key:s' 'wait:stopped' 'key:n' 'wait:next:' key:q || fail "strip: stop, and an error shown"
+"$MMCTL" play sine:440 >/dev/null # live: a seek is refused, and the strip says so
+$TTY 1 60 "$TUI" 'wait:sine:440' 'key:[C' 'wait:seek:' 'gone:seek:' key:q || fail "strip: a refused seek, shown for a while"
 "$MMCTL" stop >/dev/null
 stop
 

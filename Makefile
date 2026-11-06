@@ -87,10 +87,15 @@ $(T)/test-reply: tests/reply_test.c src/reply.c src/reply.h $(MM)/tests/check.h 
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -lm -o $@
 
-TESTS := $(T)/test-reply
+$(T)/test-keys: tests/keys_test.c src/keys.c src/keys.h $(MM)/tests/check.h Makefile
+	@mkdir -p $(@D)
+	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -o $@
+
+TESTS := $(T)/test-reply $(T)/test-keys
 
 unit: $(TESTS)
 	@$(T)/test-reply tests/fixtures
+	@$(T)/test-keys
 
 # The daemon is the pinned host's own plain build; only this client is
 # built with SAN. Notcurses gives its input thread an alternate signal

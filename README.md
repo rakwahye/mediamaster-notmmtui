@@ -5,8 +5,9 @@ A strip of a player for [mediamaster](https://github.com/rakwahye/mediamaster),
 one to a few rows tall, drawn with Notcurses. It is a client like `mmctl`:
 everything it shows comes from the daemon's socket.
 
-Early days: one row, plain: what plays, its time, and `q` to quit. Run it
-in a short terminal or pane; it fills what it is given.
+Early days: one row, plain: what plays and its time. Keys: space toggles,
+n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, q quits. Run
+it in a short terminal or pane; it fills what it is given.
 
     git clone --recursive https://github.com/rakwahye/mediamaster-notmmtui
     make && make test
