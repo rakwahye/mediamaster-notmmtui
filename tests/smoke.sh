@@ -49,4 +49,30 @@ echo "$out" | grep -qx "notmmtui [0-9.]*" || fail "own version: $out"
 echo "$out" | grep -qx "daemon: $("$MMCTL" version | sed 's/^ok //')" || fail "daemon version: $out"
 stop
 
+# --- the strip, in a pty. It waits for the daemon, then follows it.
+TTY="python3 -I tests/tty.py"
+$TTY 1 60 "$TUI" 'wait:not running' 'wait:stopped' 'wait:sine:440:30' 'wait:0:30' 'wait:‖' key:q &
+TP=$!
+sleep 0.5
+start
+sleep 0.5
+"$MMCTL" play sine:440:30 >/dev/null
+sleep 0.5
+"$MMCTL" pause >/dev/null
+wait $TP || fail "strip: waiting for the daemon, then play and pause"
+
+# narrow: the time stays, the title is cut; then wider again
+"$MMCTL" resume >/dev/null
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'size:1,20' 'wait:sine:…' 'size:1,8' 'gone:sine' \
+	'size:1,60' 'wait:sine:440:30' key:q || fail "strip: resize"
+
+if command -v ffmpeg >/dev/null; then # tags: title and artist
+	ffmpeg -v error -f lavfi -i sine=f=440:d=30 -ac 2 -metadata title="Tone One" -metadata artist="Osc" \
+	       "$T/tone.flac" -y || fail "fixture"
+	"$MMCTL" play "$T/tone.flac" >/dev/null
+	$TTY 1 60 "$TUI" 'wait:Tone' 'wait:Osc' 'wait:—' key:q || fail "strip: title and artist"
+fi
+"$MMCTL" stop >/dev/null
+stop
+
 echo "smoke: all checks passed"

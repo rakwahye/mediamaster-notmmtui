@@ -18,3 +18,4 @@ Project license: LGPL-2.1-or-later (see LICENSE).
 | Component | License | Since | Notes |
 |---|---|---|---|
 | glibc | LGPL-2.1-or-later | initial | |
+| [Notcurses](https://github.com/dankamongmen/notcurses) (`notcurses-core`) | Apache-2.0 (licence read from its COPYRIGHT, v3.0.17) | first screen | Dynamically linked, never copied. Apache-2.0 is compatible with LGPL-3.0, so the combination is distributable under the "or later" option of our licence; not under LGPL-2.1 alone |

@@ -13,6 +13,8 @@
 # when missing. From it come src/host/paths.c (where the socket is, as
 # mmctl finds it) and tests/check.h; `make test` runs its daemon.
 #
+# Needs notcurses-core >= 3.0 with headers; python3 for make test.
+#
 #   make MM=~/src/mediamaster        build against another host checkout
 #   git -C mediamaster checkout <rev> && git add mediamaster
 #                                     move the pin
@@ -47,10 +49,16 @@ endif
 
 WARN := -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wformat=2
 
+# Notcurses: the core library only (no ffmpeg/OIIO image backend).
+NC_PC := notcurses-core
+ifneq ($(shell pkg-config --atleast-version=3.0 $(NC_PC) && echo 1),1)
+  $(error $(NC_PC) >= 3.0 not found: install notcurses with its headers)
+endif
+
 # A client, like mmctl: C11, plain C99 style.
 TUI_CFLAGS := -std=c11 $(WARN) $(OPT) $(SAN_FLAGS) -D_GNU_SOURCE -Isrc -I$(MM)/src/host \
-              -DTUI_VERSION=\"$(VERSION)\"
-TUI_LIBS   := $(SAN_FLAGS)
+              -DTUI_VERSION=\"$(VERSION)\" $(shell pkg-config --cflags $(NC_PC))
+TUI_LIBS   := $(SAN_FLAGS) $(shell pkg-config --libs $(NC_PC))
 
 SRC  := $(wildcard src/*.c)
 OBJ  := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(SRC)) $(BUILD)/obj/mm/paths.o
@@ -85,10 +93,12 @@ unit: $(TESTS)
 	@$(T)/test-reply tests/fixtures
 
 # The daemon is the pinned host's own plain build; only this client is
-# built with SAN.
+# built with SAN. Notcurses gives its input thread an alternate signal
+# stack of its own, which ASan would unmap as its own when the thread
+# ends; ASan keeps out of signal stacks here.
 smoke: all
 	@$(MAKE) --no-print-directory -C $(MM) build/mediamaster build/mmctl >/dev/null
-	@sh tests/smoke.sh $(MM)/build $(BUILD)
+	@ASAN_OPTIONS=use_sigaltstack=0 sh tests/smoke.sh $(MM)/build $(BUILD)
 
 test: unit
 	@$(MAKE) --no-print-directory smoke
