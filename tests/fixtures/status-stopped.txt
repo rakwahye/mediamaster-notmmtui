@@ -1,0 +1,12 @@
+state: stopped
+item: 0
+uri: -
+source: -
+position: 0.000
+duration: -
+seekable: no
+next: -
+volume: 100
+sink: null
+buffered: 0.000
+underruns: 0

@@ -1,0 +1,16 @@
+state: playing
+item: 1
+uri: /home/u/music/Osc/two.flac
+source: ffmpeg
+title: Tab	Title
+artist: Osc
+album: LP: One
+tracknumber: 2
+position: 0.460
+duration: 3.000
+seekable: yes
+next: -
+volume: 100
+sink: null
+buffered: 1.355
+underruns: 0

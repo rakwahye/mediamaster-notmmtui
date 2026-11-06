@@ -1,0 +1,5 @@
+ok watching state track volume seek queue meta
+state track queue
+state
+state track queue
+state track

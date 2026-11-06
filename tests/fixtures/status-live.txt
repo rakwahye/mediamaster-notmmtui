@@ -1,0 +1,12 @@
+state: playing
+item: 2
+uri: sine:440
+source: raw
+position: 0.300
+duration: -
+seekable: no
+next: -
+volume: 100
+sink: null
+buffered: 1.365
+underruns: 0

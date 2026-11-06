@@ -1,0 +1,2 @@
+list	lib:artists	Artists	-	-	-
+list	lib:albums	Albums	-	-	-

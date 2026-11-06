@@ -72,10 +72,17 @@ $(BUILD)/obj/mm/paths.o: $(MM)/src/host/paths.c $(MM)/src/host/paths.h Makefile
 
 # ------------------------------------------------------------------ tests
 
-TESTS :=
+TEST_CFLAGS := $(TUI_CFLAGS) -I$(MM)/tests
+T := $(BUILD)/tests
+
+$(T)/test-reply: tests/reply_test.c src/reply.c src/reply.h $(MM)/tests/check.h Makefile
+	@mkdir -p $(@D)
+	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -lm -o $@
+
+TESTS := $(T)/test-reply
 
 unit: $(TESTS)
-	@for t in $(TESTS); do $$t || exit 1; done
+	@$(T)/test-reply tests/fixtures
 
 # The daemon is the pinned host's own plain build; only this client is
 # built with SAN.
