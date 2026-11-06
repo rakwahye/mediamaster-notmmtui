@@ -43,6 +43,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define TICK_MS 250
 #define MSG_MS 2000
@@ -373,7 +374,7 @@ int main(int argc, char **argv)
 		}
 	}
 	if (want_version) return version();
-	/* what was asked first, then the daemon */
+	/* what was asked first, then the daemon, then the terminal */
 	if (theme_name) {
 		char err[256];
 		if (theme_load(theme_name, &theme, err, sizeof(err)) != 0) {
@@ -384,6 +385,10 @@ int main(int argc, char **argv)
 	char why[256], reply[256];
 	if (daemon_fits(why, sizeof(why), reply, sizeof(reply)) == 0) { /* none running is fine: the strip waits */
 		fprintf(stderr, "notmmtui: %s\n", why);
+		return 1;
+	}
+	if (!isatty(STDOUT_FILENO) || !isatty(STDIN_FILENO)) {
+		fputs("notmmtui: the strip needs a terminal (--version works without one)\n", stderr);
 		return 1;
 	}
 	return run(&theme, look);

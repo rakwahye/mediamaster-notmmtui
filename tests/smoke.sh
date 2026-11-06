@@ -41,6 +41,8 @@ printf 'host.plugin_dir = %s/plugins\nhost.sink = null\n' "$MB" >"$T/config"
 out=$("$TUI" --version) && fail "--version with no daemon should exit 1"
 echo "$out" | grep -qx "daemon: not running ($MM_SOCK)" || fail "no daemon, and where it looked: $out"
 if "$TUI" --nosuch 2>/dev/null; then fail "an unknown option should fail"; fi
+out=$(timeout 10 "$TUI" 2>&1 </dev/null) && fail "the strip without a terminal should exit 1"
+echo "$out" | grep -q "needs a terminal" || fail "no terminal: $out"
 
 # --- the daemon's version, through our own client
 start
