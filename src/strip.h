@@ -22,7 +22,13 @@
  *              plasma shows through (NCALPHA_BLEND). It animates: the
  *              caller redraws every STRIP_FRAME_MS while it plays.
  *
- * A theme with no colours of its own (plain) is drawn in the plain look. */
+ * A theme with no colours of its own (plain) is drawn in the plain look.
+ *
+ * In every look, on a track change the title and artist decode in: each
+ * letter is noise, in cyan, until its moment, then settles, left to
+ * right (strip_settled). Paused, the strip breathes: the lit part, or in
+ * plain the ‖, fades slowly up and down. Both need frames while they
+ * last (strip_needs_frames). */
 
 #ifndef TUI_STRIP_H
 #define TUI_STRIP_H
@@ -56,7 +62,22 @@ struct strip_model {
 	int bar;               /* playhead in eighths of a cell (strip_bar), -1 for none */
 	int look;              /* enum strip_look */
 	double anim;           /* s of animation: runs while playing, stands still paused */
+	double decode;         /* s since the track changed; STRIP_SETTLED once all has settled */
+	double breath;         /* 0..1 while paused: how far up the fade is */
 };
+
+#define STRIP_SETTLED 1e9
+
+/** Whether letter i of a decoding line has settled `age` s after the
+ * track changed: at 0.13 s plus 35 ms a letter. */
+int strip_settled(size_t i, double age);
+
+/** s until every letter of a line of `n` letters has settled. */
+double strip_decode_time(size_t n);
+
+/** Whether `m` is mid-change (decoding, breathing, a moving look) and
+ * wants a frame every STRIP_FRAME_MS. */
+int strip_needs_frames(const struct strip_model *m);
 
 struct strip;
 

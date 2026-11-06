@@ -12,6 +12,10 @@
  *
  * Keys: the transport keys (keys.h), l the next look, q quits.
  *
+ * Frames: every STRIP_FRAME_MS while the strip is changing by itself (a
+ * look that moves, a title decoding in, a pause breathing); otherwise a
+ * wake every TICK_MS, drawing only what changed.
+ *
  * It follows the daemon through a `watch` connection: status is read
  * again when a line says something changed, and every RESYNC_MS anyway;
  * between reads the position is counted here. When the connection
@@ -40,6 +44,7 @@
 #define RETRY_MIN_MS 250   /* watch closed: open again after this, doubling */
 #define RETRY_MAX_MS 2000
 #define RETRY_OLD_MS 10000 /* the daemon cannot watch: ask again after this */
+#define BREATH_S     3.0   /* one breath while paused */
 
 static void usage(FILE *f)
 {
@@ -186,8 +191,11 @@ static int run(const struct theme *theme, int look)
 	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS };
 	struct timespec msg_until = { 0, 0 };
 	int dirty = 1, need_status = 1, quit = 0;
-	struct timespec frame_at;
+	struct timespec frame_at, changed_at, start;
 	clock_gettime(CLOCK_MONOTONIC, &frame_at);
+	start = changed_at = frame_at;
+	unsigned long last_item = 0;
+	m.decode = STRIP_SETTLED;
 
 	while (!quit) {
 		keep_watching(&f, &need_status);
@@ -207,14 +215,25 @@ static int run(const struct theme *theme, int look)
 			m.bar = bar;
 			dirty = 1;
 		}
-		/* a look that moves: its clock runs while playing, one frame a wake */
-		int moving = strip_look_moves(m.look) && m.daemon && m.st.state == TUI_PLAYING;
+		/* a new item decodes in; its title and artist are known once status is */
+		if (m.daemon && m.st.item && m.st.item != last_item) {
+			last_item = m.st.item;
+			clock_gettime(CLOCK_MONOTONIC, &changed_at);
+			m.decode = 0;
+		}
+		if (m.decode < STRIP_SETTLED) {
+			m.decode = since(&changed_at);
+			if (m.decode > strip_decode_time(strlen(m.st.title) + strlen(m.st.artist) + strlen(m.st.uri)))
+				m.decode = STRIP_SETTLED;
+		}
+		/* a look that moves: its clock runs while playing; a pause breathes */
+		int playing = m.daemon && m.st.state == TUI_PLAYING;
 		double dt = since(&frame_at);
 		clock_gettime(CLOCK_MONOTONIC, &frame_at);
-		if (moving) {
-			m.anim += dt > 0.5 ? 0.5 : dt;
-			dirty = 1;
-		}
+		if (playing && strip_look_moves(m.look)) m.anim += dt > 0.5 ? 0.5 : dt;
+		m.breath = m.st.state == TUI_PAUSED ? 0.5 + 0.5 * cos(2 * M_PI * since(&start) / BREATH_S) : 0;
+		int moving = strip_needs_frames(&m);
+		if (moving) dirty = 1;
 		if (m.msg[0] && past(&msg_until)) {
 			m.msg[0] = '\0';
 			dirty = 1;

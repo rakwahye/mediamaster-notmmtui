@@ -12,11 +12,14 @@
 #include <wchar.h>
 
 #define LIT       0.62 /* how far the played part goes from bg toward the sky */
-#define LIT_PAUSE 0.34
+#define LIT_PAUSE 0.44 /* paused, at the top of a breath */
 #define UNLIT     0.14
 #define GLOW      0.55 /* the playhead's glow toward fg, at its peak */
 #define BRIGHT    0.55 /* luma above which text is inked dark */
-#define PLASMA_PAUSE 0.45 /* how bright plasma stays while paused */
+#define PLASMA_PAUSE 0.45 /* how bright plasma gets while paused, at the top of a breath */
+#define BREATH_LOW   0.55 /* and how far down a breath goes, of that */
+#define SETTLE_FIRST 0.13 /* s: the first letter's moment */
+#define SETTLE_EACH  0.035
 
 struct strip {
 	struct ncplane *base, *text;
@@ -43,6 +46,21 @@ int strip_look_find(const char *name)
 }
 
 int strip_look_moves(int look) { return look == STRIP_PLASMA; }
+
+int strip_settled(size_t i, double age) { return age >= SETTLE_FIRST + SETTLE_EACH * (double)i; }
+
+double strip_decode_time(size_t n) { return SETTLE_FIRST + SETTLE_EACH * (double)n; }
+
+int strip_needs_frames(const struct strip_model *m)
+{
+	if (!m->daemon || m->msg[0]) return 0;
+	if (m->st.state == TUI_PAUSED) return 1;
+	if (m->st.state != TUI_PLAYING) return 0;
+	return strip_look_moves(m->look) || m->decode < STRIP_SETTLED;
+}
+
+/* A breath: the low point at 0, the full at 1. */
+static double breathe(double low, double breath) { return low + (1.0 - low) * breath; }
 
 /* ------------------------------------------------------------------ colour */
 
@@ -113,7 +131,12 @@ struct pen {
 	int role;
 	const uint32_t *lit; /* per column: the lit colour under it, 0 = not lit; NULL in plain */
 	int veil;            /* letters sit on the theme's bg blended over what is below */
+	double age;          /* s since the track changed, for letters that decode; < 0: they don't */
+	size_t k;            /* letters put so far, while decoding */
+	int32_t fg;          /* >= 0: this colour, not the role's (a breath) */
 };
+
+static const char *const NOISE[] = { "▖", "▗", "▘", "▚", "▞", "░", "▒", "/", "\\", "<", ">", "#", "%", "*", "+", "=" };
 
 static void pen_at(const struct pen *p, int x)
 {
@@ -122,6 +145,7 @@ static void pen_at(const struct pen *p, int x)
 		ncplane_set_bg_alpha(p->n, NCALPHA_BLEND);
 	}
 	if (p->lit && p->lit[x]) ncplane_set_fg_rgb(p->n, strip_ink(p->t, p->lit[x]));
+	else if (p->fg >= 0) ncplane_set_fg_rgb(p->n, (uint32_t)p->fg);
 	else if (p->t->c[p->role] == THEME_DEFAULT) ncplane_set_fg_default(p->n);
 	else ncplane_set_fg_rgb(p->n, (uint32_t)p->t->c[p->role]);
 }
@@ -129,7 +153,7 @@ static void pen_at(const struct pen *p, int x)
 /* Put s at (y, x), no further than column `end`; a cut string ends in
  * "…". Control characters (a tag may hold a tab) show as spaces.
  * @returns the column after the last cell written. */
-static int put_clipped(const struct pen *pn, int y, int x, const char *s, int end)
+static int put_clipped(struct pen *pn, int y, int x, const char *s, int end)
 {
 	struct ncplane *n = pn->n;
 	mbstate_t ps;
@@ -155,8 +179,18 @@ static int put_clipped(const struct pen *pn, int y, int x, const char *s, int en
 		char egc[8];
 		memcpy(egc, ctl ? " " : p, ctl ? 1 : len);
 		egc[ctl ? 1 : len] = '\0';
-		pen_at(pn, col);
-		ncplane_putstr_yx(n, y, col, egc);
+		const char *put = egc;
+		if (pn->age >= 0 && w == 1 && wc != ' ' && !strip_settled(pn->k++, pn->age)) {
+			/* not yet: noise, changing every frame, in cyan */
+			put = NOISE[(pn->k * 7 + (size_t)(pn->age * 15)) % (sizeof(NOISE) / sizeof(NOISE[0]))];
+			struct pen cy = *pn;
+			cy.role = TH_CYAN;
+			cy.fg = -1;
+			pen_at(&cy, col);
+		} else {
+			pen_at(pn, col);
+		}
+		ncplane_putstr_yx(n, y, col, put);
 		col += w;
 		p += len;
 	}
@@ -206,7 +240,12 @@ static void row(struct pen *p, const struct strip_model *m, unsigned cols)
 	}
 
 	int paused = st->state == TUI_PAUSED;
+	if (paused && !p->lit && t->c[TH_ORANGE] != THEME_DEFAULT && t->c[TH_DIM] != THEME_DEFAULT)
+		p->fg = (int32_t)rgb_mix((uint32_t)t->c[TH_DIM], (uint32_t)t->c[TH_ORANGE], m->breath);
 	int x = say(p, paused ? TH_ORANGE : TH_MAGENTA, 0, paused ? "‖ " : "▶ ", end);
+	p->fg = -1;
+	p->age = m->decode < STRIP_SETTLED ? m->decode : -1;
+	p->k = 0;
 	if (t->bold_title) ncplane_set_styles(p->n, NCSTYLE_BOLD);
 	x = say(p, TH_FG, x, st->title[0] ? st->title : st->uri, end);
 	ncplane_set_styles(p->n, NCSTYLE_NONE);
@@ -214,6 +253,7 @@ static void row(struct pen *p, const struct strip_model *m, unsigned cols)
 		x = say(p, TH_DIM, x, " — ", end);
 		say(p, TH_VIOLET, x, st->artist, end);
 	}
+	p->age = -1;
 	if (live) {
 		x = say(p, TH_GREEN, end, " live", (int)cols);
 		say(p, TH_CYAN, x, right + 5, (int)cols);
@@ -249,7 +289,7 @@ static void powerline_ground(struct ncplane *n, const struct strip_model *m, con
 	uint32_t bg = (uint32_t)t->c[TH_BG], fg = (uint32_t)t->c[TH_FG];
 	int bar = m->daemon && m->st.state != TUI_STOPPED && !m->msg[0] ? m->bar : -1;
 	int full = bar < 0 ? 0 : bar / 8, part = bar < 0 ? 0 : bar % 8;
-	double k = m->st.state == TUI_PAUSED ? LIT_PAUSE : LIT;
+	double k = m->st.state == TUI_PAUSED ? LIT_PAUSE * breathe(BREATH_LOW, m->breath) : LIT;
 	double head = bar < 0 ? -100 : bar / 8.0;
 	/* The playhead cell, lit `part` eighths from the left. Under half, a
 	 * left block of lit on the dark ground; from half on, the lit ground
@@ -290,7 +330,7 @@ static void plasma_ground(struct ncplane *n, const struct strip_model *m, const 
 	uint32_t bg = (uint32_t)t->c[TH_BG];
 	int going = m->daemon && m->st.state != TUI_STOPPED && !m->msg[0];
 	int upto = !going ? 0 : m->bar < 0 ? (int)cols : (m->bar + 4) / 8;
-	double k = m->st.state == TUI_PAUSED ? PLASMA_PAUSE : 1.0;
+	double k = m->st.state == TUI_PAUSED ? PLASMA_PAUSE * breathe(BREATH_LOW, m->breath) : 1.0;
 	for (unsigned x = 0; x < cols; x++) {
 		lit[x] = 0;
 		if ((int)x >= upto) {
@@ -359,7 +399,7 @@ void strip_draw(struct strip *s, const struct strip_model *m, const struct theme
 	ncplane_erase(s->text);
 	ncplane_set_styles(s->text, NCSTYLE_NONE);
 	ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
-	struct pen p = { .n = s->text, .t = t, .lit = lit, .veil = lit && look == STRIP_PLASMA };
+	struct pen p = { .n = s->text, .t = t, .lit = lit, .veil = lit && look == STRIP_PLASMA, .age = -1, .fg = -1 };
 	row(&p, m, cols);
 	free(lit);
 }

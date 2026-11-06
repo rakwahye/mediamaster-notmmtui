@@ -11,11 +11,14 @@ Steps, in order:
     key:<keys>    type them; \\e is Escape, \\r Enter, [A..[D arrows
     size:<r>,<c>  resize the terminal (SIGWINCH)
     sleep:<s>     pause
+    touch:<path>  create the file, to tell a script waiting on it where we are
     show:         print the screen to stderr
     color:<text>=<rrggbb|default>
                   until the first cell of <text> on screen has that foreground
     bgat:<x>=<rrggbb|default>
                   until the cell at column x of the top row has that background
+    fgat:<x>=<rrggbb|default>
+                  until the cell at column x of the top row has that foreground
     brighter:<x1>,<x2>
                   until the top row's background is brighter at x1 than at x2
     moving:<x>    until the top row's cell at x changes colour
@@ -219,8 +222,8 @@ def text():
     return screen.text()
 
 
-def until(cond, what):
-    end = time.time() + 10
+def until(cond, what, limit=10):
+    end = time.time() + limit
     while time.time() < end:
         if cond():
             return
@@ -253,6 +256,10 @@ for st in steps:
         x, _, want = arg.partition("=")
         x = int(x)
         until(lambda: (screen.b[0][x] or "default") == want, st + " (is %s)" % (screen.b[0][x] or "default"))
+    elif kind == "fgat":
+        x, _, want = arg.partition("=")
+        x = int(x)
+        until(lambda: (screen.f[0][x] or "default") == want, st + " (is %s)" % (screen.f[0][x] or "default"))
     elif kind == "brighter":
         a, b = (int(v) for v in arg.split(","))
         lum = lambda h: 0 if not h or not h[0].isalnum() or h.startswith("idx") else \
@@ -285,6 +292,8 @@ for st in steps:
                 sys.exit(1)
     elif kind == "show":
         sys.stderr.write(text() + "\n")
+    elif kind == "touch":
+        open(arg, "w").close()
     elif kind == "sleep":
         end = time.time() + float(arg)
         while time.time() < end:

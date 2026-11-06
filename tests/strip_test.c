@@ -52,11 +52,43 @@ static int plasma(void)
 	return 0;
 }
 
+static int decode(void)
+{
+	CHECK(!strip_settled(0, 0) && strip_settled(0, 0.2), "the first letter settles after a moment");
+	CHECK(!strip_settled(10, 0.2) && strip_settled(10, 0.49), "later ones later");
+	for (size_t i = 0; i < 60; i++)
+		CHECK(strip_settled(i, strip_decode_time(i + 1)), "all settled by strip_decode_time");
+	CHECK(strip_decode_time(40) < 1.6, "a long line settles within a second and a half");
+
+	struct strip_model m;
+	memset(&m, 0, sizeof(m));
+	m.daemon = 1;
+	m.decode = STRIP_SETTLED;
+	m.look = STRIP_POWERLINE;
+	m.st.state = TUI_PLAYING;
+	CHECK(!strip_needs_frames(&m), "powerline, settled, playing: no frames");
+	m.decode = 0.1;
+	CHECK(strip_needs_frames(&m), "decoding: frames");
+	m.decode = STRIP_SETTLED;
+	m.st.state = TUI_PAUSED;
+	CHECK(strip_needs_frames(&m), "paused: breathing, frames");
+	m.st.state = TUI_PLAYING;
+	m.look = STRIP_PLASMA;
+	CHECK(strip_needs_frames(&m), "plasma playing: frames");
+	m.st.state = TUI_STOPPED;
+	CHECK(!strip_needs_frames(&m), "stopped: none");
+	m.st.state = TUI_PLAYING;
+	m.daemon = 0;
+	CHECK(!strip_needs_frames(&m), "no daemon: none");
+	return 0;
+}
+
 int main(void)
 {
 	RUN(bar);
 	RUN(sky);
 	RUN(ink);
 	RUN(plasma);
+	RUN(decode);
 	CHECK_PASS("test-strip");
 }
