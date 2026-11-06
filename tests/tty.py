@@ -167,8 +167,11 @@ class Screen:
             ch = text[i]
             if ch == "\x1b":
                 m = SEQ.match(text, i)
-                if not m:
-                    return text[i:]  # incomplete: keep for the next feed
+                # incomplete: keep for the next feed. A CSI, OSC or string cut
+                # short by the end of a read would otherwise pass for a
+                # two-byte escape, and the rest of it be shown as text
+                if not m or (m.end() == i + 2 and text[i + 1] in "[]P_^"):
+                    return text[i:]
                 if m.group("csi") is not None and not m.group("priv"):
                     self.csi(m.group("csi"), m.group("final"))
                 i = m.end()
