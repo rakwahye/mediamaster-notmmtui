@@ -28,7 +28,13 @@
  * letter is noise, in cyan, until its moment, then settles, left to
  * right (strip_settled). Paused, the strip breathes: the lit part, or in
  * plain the ‖, fades slowly up and down. Both need frames while they
- * last (strip_needs_frames). */
+ * last (strip_needs_frames).
+ *
+ * With levels from the daemon (watch levels), a two-cell meter stands
+ * before the time, left channel then right, each an eighth block whose
+ * height is its peak on a 48 dB scale (strip_meter_eighths):
+ *
+ *     ▶ Title — Artist                      ▆▃ 1:23 / 6:53 */
 
 #ifndef TUI_STRIP_H
 #define TUI_STRIP_H
@@ -65,6 +71,8 @@ struct strip_model {
 	double anim;           /* s of animation: runs while playing, stands still paused */
 	double decode;         /* s since the track changed; STRIP_SETTLED once all has settled */
 	double breath;         /* 0..1 while paused: how far up the fade is */
+	int levels;            /* lv holds what the daemon last said: show the meter */
+	struct tui_levels lv;
 };
 
 #define STRIP_SETTLED 1e9
@@ -104,6 +112,10 @@ uint32_t strip_plasma(const struct theme *t, double x, double y, double time);
 /** Text colour that reads on `under`: the theme's bg on a bright cell,
  * its fg otherwise. */
 uint32_t strip_ink(const struct theme *t, uint32_t under);
+
+/** A peak (0..255 for 0..1 linear) as eighths of a cell, 0..8: 0 at
+ * -48 dBFS or below, 8 at 0 dBFS. */
+int strip_meter_eighths(uint8_t peak);
 
 /** "m:ss", or "h:mm:ss" from an hour. */
 void strip_clock(char *buf, size_t cap, double s);

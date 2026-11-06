@@ -83,6 +83,19 @@ static int decode(void)
 	return 0;
 }
 
+static int meter(void)
+{
+	CHECK(strip_meter_eighths(255) == 8, "full scale is a full cell");
+	CHECK(strip_meter_eighths(0x80) == 7, "-6 dB: 7/8");
+	CHECK(strip_meter_eighths(0x40) == 6, "-12 dB: 6/8");
+	CHECK(strip_meter_eighths(0x33) == 6, "a tone of 0.2, -14 dB: 6/8");
+	CHECK(strip_meter_eighths(1) == 0, "-48 dB: nothing");
+	CHECK(strip_meter_eighths(0) == 0, "silence: nothing");
+	for (int p = 1; p < 255; p++)
+		CHECK(strip_meter_eighths((uint8_t)p) <= strip_meter_eighths((uint8_t)(p + 1)), "never falls as the peak rises");
+	return 0;
+}
+
 int main(void)
 {
 	RUN(bar);
@@ -90,5 +103,6 @@ int main(void)
 	RUN(ink);
 	RUN(plasma);
 	RUN(decode);
+	RUN(meter);
 	CHECK_PASS("test-strip");
 }

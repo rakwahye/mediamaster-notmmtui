@@ -26,7 +26,12 @@
  * again when a line says something changed, and every RESYNC_MS anyway;
  * between reads the position is counted here. When the connection
  * closes it is opened again; a daemon that cannot watch is asked for
- * status every tick instead. */
+ * status every tick instead.
+ *
+ * Levels come on a second connection, `watch levels`, 20 lines a second
+ * while there is sound: kept apart so the event watch is never the slow
+ * reader the daemon drops. It is open while the event watch is, opened
+ * again when it closes, and left be for a daemon that has no levels. */
 
 #include "ipc.h"
 #include "paths.h"
@@ -156,12 +161,45 @@ struct follow {
 	struct timespec resync; /* read status again from then */
 	struct timespec read_at;/* when status was last read */
 	unsigned events;        /* TUI_EV_* from lines not yet acted on */
+	struct tui_watch lw;    /* watch levels */
+	long lbackoff_ms;
+	struct timespec lretry;
+	struct tui_levels lv;   /* the last levels line */
+	int got_levels;         /* lv is new since it was looked at */
 };
 
 static void on_line(void *ctx, const char *line)
 {
 	struct follow *f = ctx;
 	f->events |= tui_watch_line(line, NULL);
+}
+
+static void on_levels(void *ctx, const char *line)
+{
+	struct follow *f = ctx;
+	if (tui_watch_line(line, &f->lv) & TUI_EV_LEVELS) f->got_levels = 1;
+}
+
+/* Keep `watch levels` open beside the event watch, and only then. */
+static void keep_levels(struct follow *f, struct strip_model *m)
+{
+	if (f->w.fd < 0) { /* no daemon we watch: no levels either */
+		if (f->lw.fd >= 0) tui_watch_close(&f->lw);
+		if (m->levels) m->levels = 0;
+		f->lbackoff_ms = RETRY_MIN_MS;
+		return;
+	}
+	if (f->lw.fd >= 0 || !past(&f->lretry)) return;
+	char *argv[] = { "watch", "levels", NULL };
+	int rc = tui_watch_open(&f->lw, 2, argv);
+	if (rc == TUI_OK) {
+		f->lbackoff_ms = RETRY_MIN_MS;
+	} else if (rc == TUI_ERR) {
+		deadline(&f->lretry, RETRY_OLD_MS); /* a daemon with no levels: ask again later */
+	} else {
+		deadline(&f->lretry, f->lbackoff_ms);
+		f->lbackoff_ms = f->lbackoff_ms * 2 > RETRY_MAX_MS ? RETRY_MAX_MS : f->lbackoff_ms * 2;
+	}
 }
 
 /* Keep a watch connection open to a daemon that fits, or say why not.
@@ -238,7 +276,8 @@ static int run(const struct theme *theme, int look)
 	struct strip_model m;
 	memset(&m, 0, sizeof(m));
 	m.look = look;
-	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS };
+	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS,
+	                    .lw = TUI_WATCH_INIT, .lbackoff_ms = RETRY_MIN_MS };
 	struct timespec msg_until = { 0, 0 };
 	int dirty = 1, need_status = 1, quit = 0;
 	struct timespec frame_at, changed_at, start;
@@ -249,6 +288,7 @@ static int run(const struct theme *theme, int look)
 
 	while (!quit) {
 		keep_watching(&f, &m, &need_status);
+		keep_levels(&f, &m);
 		if (f.polling || past(&f.resync)) need_status = 1;
 		if (need_status && m.refused[0]) { /* not ours to talk to: no status, just the refusal */
 			m.daemon = 0;
@@ -300,8 +340,11 @@ static int run(const struct theme *theme, int look)
 			dirty = 0;
 		}
 
-		struct pollfd pf[2] = { { infd, POLLIN, 0 }, { f.w.fd, POLLIN, 0 } };
-		if (poll(pf, f.w.fd >= 0 ? 2 : 1, moving ? STRIP_FRAME_MS : TICK_MS) < 0 && errno != EINTR) break;
+		struct pollfd pf[3] = { { infd, POLLIN, 0 }, { -1, POLLIN, 0 }, { -1, POLLIN, 0 } };
+		nfds_t npf = 1;
+		if (f.w.fd >= 0) pf[npf++].fd = f.w.fd;
+		if (f.lw.fd >= 0) pf[npf++].fd = f.lw.fd;
+		if (poll(pf, npf, moving ? STRIP_FRAME_MS : TICK_MS) < 0 && errno != EINTR) break;
 
 		ncinput ni;
 		uint32_t k;
@@ -327,12 +370,28 @@ static int run(const struct theme *theme, int look)
 			deadline(&f.retry, f.backoff_ms); /* closed: the daemon went, or dropped us */
 			need_status = 1;
 		}
+		if (f.lw.fd >= 0 && tui_watch_read(&f.lw, on_levels, &f) != 0) {
+			deadline(&f.lretry, f.lbackoff_ms); /* closed: opened again in a moment */
+			if (m.levels) { /* no meter frozen on its last line meanwhile */
+				m.levels = 0;
+				dirty = 1;
+			}
+		}
+		if (f.got_levels) {
+			f.got_levels = 0;
+			if (!m.levels || memcmp(&m.lv, &f.lv, sizeof(m.lv))) {
+				m.lv = f.lv;
+				m.levels = 1;
+				dirty = 1;
+			}
+		}
 		if (f.events) {
 			need_status = 1;
 			f.events = 0;
 		}
 	}
 	tui_watch_close(&f.w);
+	tui_watch_close(&f.lw);
 	strip_free(strip);
 	notcurses_stop(nc);
 	return 0;

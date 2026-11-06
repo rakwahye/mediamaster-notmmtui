@@ -20,6 +20,7 @@
 #define BREATH_LOW   0.55 /* and how far down a breath goes, of that */
 #define SETTLE_FIRST 0.13 /* s: the first letter's moment */
 #define SETTLE_EACH  0.035
+#define METER_DB     48.0 /* the meter's range, below full scale */
 
 struct strip {
 	struct ncplane *base, *text;
@@ -111,6 +112,15 @@ uint32_t strip_plasma(const struct theme *t, double x, double y, double time)
 uint32_t strip_ink(const struct theme *t, uint32_t under)
 {
 	return luma(under) > BRIGHT ? (uint32_t)t->c[TH_BG] : (uint32_t)t->c[TH_FG];
+}
+
+int strip_meter_eighths(uint8_t peak)
+{
+	if (!peak) return 0;
+	double db = 20.0 * log10(peak / 255.0);
+	double h = (db + METER_DB) / METER_DB;
+	if (h <= 0) return 0;
+	return h >= 1 ? 8 : (int)lround(h * 8);
 }
 
 int strip_bar(unsigned cols, double pos, double duration)
@@ -242,6 +252,14 @@ static void row(struct pen *p, const struct strip_model *m, unsigned cols)
 		say(p, TH_CYAN, 0, now, (int)cols);
 		return;
 	}
+	int at = end; /* where the time starts */
+	/* the meter, just before the time, when there is room for it */
+	if (m->levels && end >= 16) {
+		static const char *const H[9] = { " ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" };
+		end -= 3; /* " LR" */
+		say(p, TH_CYAN, end + 1, H[strip_meter_eighths(m->lv.peak[0])], end + 2);
+		say(p, TH_MAGENTA, end + 2, H[strip_meter_eighths(m->lv.peak[1])], end + 3);
+	}
 
 	int paused = st->state == TUI_PAUSED;
 	if (paused && !p->lit && t->c[TH_ORANGE] != THEME_DEFAULT && t->c[TH_DIM] != THEME_DEFAULT)
@@ -259,13 +277,13 @@ static void row(struct pen *p, const struct strip_model *m, unsigned cols)
 	}
 	p->age = -1;
 	if (live) {
-		x = say(p, TH_GREEN, end, " live", (int)cols);
+		x = say(p, TH_GREEN, at, " live", (int)cols);
 		say(p, TH_CYAN, x, right + 5, (int)cols);
 	} else { /* what has played in cyan, the rest dim */
 		const char *slash = strchr(right, '/');
 		char head[24];
 		snprintf(head, sizeof(head), "%.*s", (int)(slash - right), right);
-		x = say(p, TH_CYAN, end, head, (int)cols);
+		x = say(p, TH_CYAN, at, head, (int)cols);
 		say(p, TH_DIM, x, slash, (int)cols);
 	}
 }

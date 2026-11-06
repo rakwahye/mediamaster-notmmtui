@@ -78,6 +78,15 @@ kill $FAKE; wait $FAKE 2>/dev/null || true
 grep -qx watch "$T/fake.sock.log" || fail "strip did not watch"
 n=$(grep -cx status "$T/fake.sock.log")
 [ "$n" -le 4 ] || fail "with watch, status read $n times in ~3 s"
+grep -qx 'watch levels' "$T/fake.sock.log" || fail "strip did not watch levels"
+# levels: the meter shows L 80 (-6 dB, 7/8) and R 40 (-12 dB, 6/8); when the
+# daemon hangs up on the levels watch, it comes back
+fake watch-drop
+MM_SOCK="$T/fake.sock" $TTY 1 60 "$TUI" 'wait:Tab Title' 'wait:▇▆' 'sleep:2.5' 'wait:▇▆' key:q ||
+	{ kill $FAKE; fail "strip: the meter, and levels again after a hang-up"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
+n=$(grep -cx 'watch levels' "$T/fake.sock.log")
+[ "$n" -ge 2 ] || fail "levels watched $n times across a hang-up"
 fake nowatch
 MM_SOCK="$T/fake.sock" $TTY 1 60 "$TUI" 'wait:Tab Title' 'sleep:1.5' key:q ||
 	{ kill $FAKE; fail "strip without watch"; }
@@ -205,6 +214,12 @@ $TTY 1 60 "$TUI --look plain --theme $T/theme" 'wait:sine:440:30' 'color:▶=00f
 printf 'magenta = green\n' >"$T/theme"
 out=$("$TUI" --theme "$T/theme" 2>&1) && fail "a bad theme file should fail"
 echo "$out" | grep -q 'line 1' || fail "a bad theme says where: $out"
+
+# levels from the real daemon: a tone of 0.2 is -14 dB, 6/8 of the meter; the
+# pause's silence empties it
+"$MMCTL" play sine:440:30 >/dev/null
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'wait:▆▆' 'key: ' 'wait:‖' 'gone:▆▆' 'key: ' 'wait:▆▆' \
+	key:q || fail "strip: the meter, from the daemon's levels"
 
 # the position counts on between reads; the daemon goes, comes back, is followed
 "$MMCTL" play sine:440:30 >/dev/null

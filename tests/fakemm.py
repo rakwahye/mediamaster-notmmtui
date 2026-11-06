@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """A stand-in daemon, to see how the strip follows one.
 
-    fakemm.py <socket> <fixtures> watch|nowatch <version reply>
+    fakemm.py <socket> <fixtures> watch|watch-drop|nowatch <version reply>
 
 Answers `status` from status-playing-file.txt, logging each verb it is
 sent, one a line, to <socket>.log. With `watch`, a watch connection is
@@ -9,7 +9,9 @@ kept open; one second after the first watcher comes, status becomes
 status-paused.txt and the watchers are told "state". With `nowatch`,
 watch is refused as a daemon too old for it would: "err unknown verb".
 `version` is answered with <version reply>, e.g. "ok mediamaster 0.1.0
-abi 3". Runs until killed."""
+abi 3". `watch levels` gets "levels 80 40 <bands>" 20 times a second; with
+watch-drop, each levels watcher is hung up on after a second. Each command
+is logged with its words. Runs until killed."""
 import os, socket, sys, threading, time
 
 path, fixtures, mode, version = sys.argv[1:5]
@@ -49,14 +51,30 @@ def later():
                 pass
 
 
+def levels(c):
+    line = b"levels 80 40 " + b"".join(b"%02x" % (8 * k) for k in range(32)) + b"\n"
+    end = time.time() + (1.0 if mode == "watch-drop" else 1e9)
+    try:
+        while time.time() < end:
+            c.sendall(line)
+            time.sleep(0.05)
+    except OSError:
+        pass
+    c.close()
+
+
 def serve(c):
     argv = frame(c)
     if not argv:
         c.close()
         return
-    log.write(argv[0] + "\n")
+    log.write(" ".join(argv) + "\n")
+    if argv[0] == "watch" and argv[1:] == ["levels"] and mode.startswith("watch"):
+        c.sendall(b"ok watching levels\n")
+        threading.Thread(target=levels, args=(c,), daemon=True).start()
+        return
     if argv[0] == "watch":
-        if mode != "watch":
+        if not mode.startswith("watch"):
             c.sendall(b"err unknown verb: watch\n")
             c.close()
             return
