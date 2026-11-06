@@ -16,7 +16,8 @@ void strip_clock(char *buf, size_t cap, double s)
 }
 
 /* Put s at (y, x), no further than column `end`; a cut string ends in
- * "…". @returns the column after the last cell written. */
+ * "…". Control characters (a tag may hold a tab) show as spaces.
+ * @returns the column after the last cell written. */
 static int put_clipped(struct ncplane *n, int y, int x, const char *s, int end)
 {
 	mbstate_t ps;
@@ -27,7 +28,8 @@ static int put_clipped(struct ncplane *n, int y, int x, const char *s, int end)
 		wchar_t wc;
 		size_t len = mbrtowc(&wc, p, strlen(p), &ps);
 		if (len == (size_t)-1 || len == (size_t)-2) break;
-		int w = wcwidth(wc);
+		int ctl = wc < 0x20 || (wc >= 0x7f && wc < 0xa0);
+		int w = ctl ? 1 : wcwidth(wc);
 		if (w < 0) w = 0;
 		/* room for this glyph, and for "…" if anything follows it */
 		int need = w + (p[len] ? 1 : 0);
@@ -36,8 +38,8 @@ static int put_clipped(struct ncplane *n, int y, int x, const char *s, int end)
 			return col;
 		}
 		char egc[8];
-		memcpy(egc, p, len);
-		egc[len] = '\0';
+		memcpy(egc, ctl ? " " : p, ctl ? 1 : len);
+		egc[ctl ? 1 : len] = '\0';
 		ncplane_putstr_yx(n, y, col, egc);
 		col += w;
 		p += len;

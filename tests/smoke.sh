@@ -67,10 +67,10 @@ $TTY 1 60 "$TUI" 'wait:sine:440:30' 'size:1,20' 'wait:sine:…' 'size:1,8' 'gone
 	'size:1,60' 'wait:sine:440:30' key:q || fail "strip: resize"
 
 if command -v ffmpeg >/dev/null; then # tags: title and artist
-	ffmpeg -v error -f lavfi -i sine=f=440:d=30 -ac 2 -metadata title="Tone One" -metadata artist="Osc" \
+	ffmpeg -v error -f lavfi -i sine=f=440:d=30 -ac 2 -metadata title="Tone	One" -metadata artist="Osc" \
 	       "$T/tone.flac" -y || fail "fixture"
 	"$MMCTL" play "$T/tone.flac" >/dev/null
-	$TTY 1 60 "$TUI" 'wait:Tone' 'wait:Osc' 'wait:—' key:q || fail "strip: title and artist"
+	$TTY 1 60 "$TUI" 'wait:Tone One — Osc' key:q || fail "strip: title and artist, a tab in the title shown as a space"
 fi
 # keys: toggle twice, volume, seek; the daemon says what happened
 "$MMCTL" play sine:440:30 >/dev/null
