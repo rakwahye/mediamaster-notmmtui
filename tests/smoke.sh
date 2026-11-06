@@ -108,6 +108,19 @@ pos=$(echo "$st" | sed -n 's/^position: //p')
 $TTY 1 60 "$TUI" 'wait:sine:440:30' 'key:s' 'wait:stopped' 'key:n' 'wait:next:' key:q || fail "strip: stop, and an error shown"
 "$MMCTL" play sine:440 >/dev/null # live: a seek is refused, and the strip says so
 $TTY 1 60 "$TUI" 'wait:sine:440' 'key:[C' 'wait:seek:' 'gone:seek:' key:q || fail "strip: a refused seek, shown for a while"
+# themes: powerlines by default, plain, a file over powerlines
+"$MMCTL" play sine:440:30 >/dev/null
+$TTY 1 60 "$TUI" 'wait:sine:440:30' 'color:▶=ff2bd6' 'color:sine:440:30=e6f0ff' 'color:0:0=19d3ff' \
+	'color:/ 0:30=3a3f5c' 'key: ' 'color:‖=ff7a1a' 'key: ' key:q || fail "theme powerlines"
+$TTY 1 60 "$TUI --theme plain" 'wait:sine:440:30' 'color:▶=default' 'color:sine:440:30=default' key:q ||
+	fail "theme plain"
+printf '# mine\nmagenta = #00ff00\n' >"$T/theme"
+$TTY 1 60 "$TUI --theme $T/theme" 'wait:sine:440:30' 'color:▶=00ff00' 'color:0:0=19d3ff' key:q ||
+	fail "theme file"
+printf 'magenta = green\n' >"$T/theme"
+out=$("$TUI" --theme "$T/theme" 2>&1) && fail "a bad theme file should fail"
+echo "$out" | grep -q 'line 1' || fail "a bad theme says where: $out"
+
 # the position counts on between reads; the daemon goes, comes back, is followed
 "$MMCTL" play sine:440:30 >/dev/null
 $TTY 1 60 "$TUI" 'wait:sine:440:30' 'wait:0:02 /' 'wait:not running' 'wait:sine:660:30' key:q &

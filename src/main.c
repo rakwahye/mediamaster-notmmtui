@@ -2,7 +2,8 @@
 /** @file main.c
  * @brief notmmtui: a strip of a player for the mediamaster daemon.
  *
- *   notmmtui             the strip, in the whole terminal (make it short)
+ *   notmmtui [--theme powerlines|plain|<file>]
+ *                        the strip, in the whole terminal (make it short)
  *   notmmtui --version   this client's version and the daemon's
  *
  * Keys: the transport keys (keys.h), q quits.
@@ -17,6 +18,7 @@
 #include "keys.h"
 #include "reply.h"
 #include "strip.h"
+#include "theme.h"
 #include "watch.h"
 #include <errno.h>
 #include <locale.h>
@@ -36,7 +38,8 @@
 
 static void usage(FILE *f)
 {
-	fputs("usage: notmmtui [--version]\n", f);
+	fputs("usage: notmmtui [--theme powerlines|plain|<file>]\n"
+	      "       notmmtui --version\n", f);
 }
 
 static int version(void)
@@ -151,7 +154,7 @@ static double shown_position(const struct strip_model *m, const struct follow *f
 	return floor(p);
 }
 
-static int run(void)
+static int run(const struct theme *theme)
 {
 	struct notcurses_options opts = {
 		.flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_INHIBIT_SETLOCALE,
@@ -189,7 +192,7 @@ static int run(void)
 			dirty = 1;
 		}
 		if (dirty) {
-			strip_draw(std, &m);
+			strip_draw(std, &m, theme);
 			notcurses_render(nc);
 			dirty = 0;
 		}
@@ -236,9 +239,16 @@ int main(int argc, char **argv)
 		usage(stdout);
 		return 0;
 	}
-	if (argc != 1) {
+	struct theme theme = theme_powerlines;
+	if (argc == 3 && !strcmp(argv[1], "--theme")) {
+		char err[256];
+		if (theme_load(argv[2], &theme, err, sizeof(err)) != 0) {
+			fprintf(stderr, "notmmtui: theme %s\n", err);
+			return 2;
+		}
+	} else if (argc != 1) {
 		usage(stderr);
 		return 2;
 	}
-	return run();
+	return run(&theme);
 }

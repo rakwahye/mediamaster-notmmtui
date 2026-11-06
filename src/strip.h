@@ -14,6 +14,7 @@
 #define TUI_STRIP_H
 
 #include "reply.h"
+#include "theme.h"
 #include <stddef.h>
 
 struct ncplane;
@@ -26,8 +27,8 @@ struct strip_model {
 	double pos;            /* position to show, whole seconds (counted on between reads) */
 };
 
-/** Redraw `n` from `m`. */
-void strip_draw(struct ncplane *n, const struct strip_model *m);
+/** Redraw `n` from `m`, in theme `t`. */
+void strip_draw(struct ncplane *n, const struct strip_model *m, const struct theme *t);
 
 /** "m:ss", or "h:mm:ss" from an hour. */
 void strip_clock(char *buf, size_t cap, double s);

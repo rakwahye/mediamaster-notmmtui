@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """Run notmmtui in a pty of a given size and drive it.
 
-    tty.py <rows> <cols> <program> [steps...]
+    tty.py <rows> <cols> <command> [steps...]
+
+<command> is split as a shell would (quotes, no expansion).
 
 Steps, in order:
     wait:<text>   until <text> is on the screen
@@ -10,6 +12,8 @@ Steps, in order:
     size:<r>,<c>  resize the terminal (SIGWINCH)
     sleep:<s>     pause
     show:         print the screen to stderr
+    color:<text>=<rrggbb|default>
+                  until the first cell of <text> on screen has that foreground
 
 Then it waits for the program to exit and exits with its status. On a
 step that times out it prints the screen text and exits 1.
@@ -17,9 +21,9 @@ step that times out it prints the screen text and exits 1.
 The pty answers Notcurses' startup queries as foot would (version,
 cursor position, device attributes), so it starts without a real
 terminal. What it shows is rebuilt by a small VT interpreter (cursor
-moves, erases, repeat; colours ignored), since Notcurses writes only the
-cells that changed."""
-import codecs, fcntl, os, pty, re, select, signal, struct, sys, termios, time, unicodedata
+moves, erases, repeat, foreground colour), since Notcurses writes only
+the cells that changed."""
+import codecs, shlex, fcntl, os, pty, re, select, signal, struct, sys, termios, time, unicodedata
 
 rows, cols, prog, steps = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4:]
 pid, fd = pty.fork()
@@ -27,7 +31,8 @@ if pid == 0:
     fcntl.ioctl(1, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, cols * 10, rows * 20))
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor")
     env.setdefault("LANG", "C.UTF-8")
-    os.execve(prog, [prog], env)
+    argv = shlex.split(prog)
+    os.execve(argv[0], argv, env)
 
 out = b""
 answered = False
@@ -55,17 +60,36 @@ def pump(timeout):
 
 class Screen:
     def __init__(self, r, c):
+        self.fg = None  # None: the terminal's default; else "rrggbb"
         self.resize(r, c)
         self.y = self.x = 0
         self.last = " "
 
     def resize(self, r, c):
-        old = getattr(self, "g", [])
+        old, oldfg = getattr(self, "g", []), getattr(self, "f", [])
         self.r, self.c = r, c
         self.g = [[" "] * c for _ in range(r)]
+        self.f = [[None] * c for _ in range(r)]
         for y, row in enumerate(old[:r]):
             for x, ch in enumerate(row[:c]):
                 self.g[y][x] = ch
+                self.f[y][x] = oldfg[y][x]
+
+    def sgr(self, params):
+        p = [int(v) if v.isdigit() else 0 for v in re.split("[;:]", params)] if params else [0]
+        i = 0
+        while i < len(p):
+            if p[i] in (0, 39):
+                self.fg = None
+            elif p[i] == 38 and i + 4 < len(p) and p[i + 1] == 2:
+                self.fg = "%02x%02x%02x" % (p[i + 2], p[i + 3], p[i + 4])
+                i += 4
+            elif p[i] == 38 and i + 2 < len(p) and p[i + 1] == 5:
+                self.fg = "idx%d" % p[i + 2]
+                i += 2
+            elif p[i] == 48 and i + 1 < len(p):
+                i += 4 if p[i + 1] == 2 else 2
+            i += 1
 
     def put(self, ch):
         w = 2 if unicodedata.east_asian_width(ch) in "WF" else 0 if unicodedata.combining(ch) else 1
@@ -74,6 +98,7 @@ class Screen:
         if self.x + w > self.c:
             self.x, self.y = 0, min(self.y + 1, self.r - 1)
         self.g[self.y][self.x] = ch
+        self.f[self.y][self.x] = self.fg
         if w == 2 and self.x + 1 < self.c:
             self.g[self.y][self.x + 1] = ""
         self.x += w
@@ -84,7 +109,9 @@ class Screen:
         a = n[0] if n and n[0] else 1
         clampx = lambda v: max(0, min(self.c - 1, v))
         clampy = lambda v: max(0, min(self.r - 1, v))
-        if final in "Hf":
+        if final == "m":
+            self.sgr(params)
+        elif final in "Hf":
             self.y = clampy((n[0] if n and n[0] else 1) - 1)
             self.x = clampx((n[1] if len(n) > 1 and n[1] else 1) - 1)
         elif final == "A": self.y = clampy(self.y - a)
@@ -129,6 +156,16 @@ class Screen:
     def text(self):
         return "\n".join("".join(row) for row in self.g)
 
+    def color_of(self, needle):
+        for y, row in enumerate(self.g):
+            line = "".join(row)
+            x = line.find(needle)
+            if x >= 0:
+                # line index to cell index: wide glyphs leave "" behind
+                cells = [i for i, ch in enumerate(row) if ch != ""]
+                return self.f[y][cells[x]] or "default"
+        return None
+
 
 SEQ = re.compile(r"\x1b(?:\[(?P<priv>[?<>=]?)(?P<csi>[0-9;:]*)[ -/]*(?P<final>[@-~])"
                  r"|\][^\x07\x1b]*(?:\x07|\x1b\\)|[P_^][^\x1b]*\x1b\\|[()*+][0-9A-Za-z]|[ -/]*[0-~])")
@@ -168,6 +205,9 @@ for st in steps:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", r, c, c * 10, r * 20))
         screen.resize(r, c)
         os.kill(pid, signal.SIGWINCH)
+    elif kind == "color":
+        want_text, _, want = arg.rpartition("=")
+        until(lambda: screen.color_of(want_text) == want, st + " (is %s)" % screen.color_of(want_text))
     elif kind == "show":
         sys.stderr.write(text() + "\n")
     elif kind == "sleep":

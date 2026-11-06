@@ -15,6 +15,25 @@ void strip_clock(char *buf, size_t cap, double s)
 	else snprintf(buf, cap, "%lu:%02lu", t / 60, t % 60);
 }
 
+static void ink(struct ncplane *n, const struct theme *t, int role)
+{
+	if (t->c[role] == THEME_DEFAULT) ncplane_set_fg_default(n);
+	else ncplane_set_fg_rgb(n, (uint32_t)t->c[role]);
+}
+
+/* The theme's background under everything, and for what is written. */
+static void ground(struct ncplane *n, const struct theme *t)
+{
+	uint64_t ch = 0;
+	if (t->c[TH_BG] == THEME_DEFAULT) ncchannels_set_bg_default(&ch);
+	else ncchannels_set_bg_rgb(&ch, (uint32_t)t->c[TH_BG]);
+	if (t->c[TH_FG] == THEME_DEFAULT) ncchannels_set_fg_default(&ch);
+	else ncchannels_set_fg_rgb(&ch, (uint32_t)t->c[TH_FG]);
+	ncplane_set_base(n, " ", 0, ch);
+	ncplane_set_channels(n, ch);
+	ncplane_set_styles(n, NCSTYLE_NONE);
+}
+
 /* Put s at (y, x), no further than column `end`; a cut string ends in
  * "…". Control characters (a tag may hold a tab) show as spaces.
  * @returns the column after the last cell written. */
@@ -47,23 +66,27 @@ static int put_clipped(struct ncplane *n, int y, int x, const char *s, int end)
 	return col;
 }
 
-void strip_draw(struct ncplane *n, const struct strip_model *m)
+void strip_draw(struct ncplane *n, const struct strip_model *m, const struct theme *t)
 {
 	unsigned rows, cols;
 	ncplane_dim_yx(n, &rows, &cols);
+	ground(n, t);
 	ncplane_erase(n);
 	if (!rows || !cols) return;
 
 	if (m->msg[0]) {
+		ink(n, t, TH_ORANGE);
 		put_clipped(n, 0, 0, m->msg, (int)cols);
 		return;
 	}
 	if (!m->daemon) {
+		ink(n, t, TH_DIM);
 		put_clipped(n, 0, 0, "mediamaster is not running", (int)cols);
 		return;
 	}
 	const struct tui_status *st = &m->st;
 	if (st->state == TUI_STOPPED) {
+		ink(n, t, TH_DIM);
 		put_clipped(n, 0, 0, "■ stopped", (int)cols);
 		return;
 	}
@@ -79,16 +102,31 @@ void strip_draw(struct ncplane *n, const struct strip_model *m)
 	int rw = (int)strlen(right);
 	int end = (int)cols - rw;
 	if (end < 4) { /* too narrow for both: the time wins */
+		ink(n, t, TH_CYAN);
 		put_clipped(n, 0, 0, right + 1, (int)cols);
 		return;
 	}
 
-	int x = put_clipped(n, 0, 0, st->state == TUI_PAUSED ? "‖ " : "▶ ", end);
-	const char *title = st->title[0] ? st->title : st->uri;
-	x = put_clipped(n, 0, x, title, end);
+	int paused = st->state == TUI_PAUSED;
+	ink(n, t, paused ? TH_ORANGE : TH_MAGENTA);
+	int x = put_clipped(n, 0, 0, paused ? "‖ " : "▶ ", end);
+	ink(n, t, TH_FG);
+	if (t->bold_title) ncplane_set_styles(n, NCSTYLE_BOLD);
+	x = put_clipped(n, 0, x, st->title[0] ? st->title : st->uri, end);
+	ncplane_set_styles(n, NCSTYLE_NONE);
 	if (st->artist[0] && x < end - 4) {
+		ink(n, t, TH_DIM);
 		x = put_clipped(n, 0, x, " — ", end);
+		ink(n, t, TH_VIOLET);
 		put_clipped(n, 0, x, st->artist, end);
 	}
-	ncplane_putstr_yx(n, 0, end, right);
+	/* " now / dur": what has played in cyan, the rest dim */
+	const char *slash = strchr(right, '/');
+	size_t nl = slash ? (size_t)(slash - right) : strlen(right);
+	ink(n, t, TH_CYAN);
+	ncplane_putnstr_yx(n, 0, end, nl, right);
+	if (slash) {
+		ink(n, t, TH_DIM);
+		ncplane_putstr_yx(n, 0, end + (int)nl, slash);
+	}
 }

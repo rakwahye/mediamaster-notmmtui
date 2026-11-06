@@ -7,7 +7,13 @@ everything it shows comes from the daemon's socket.
 
 Early days: one row, plain: what plays and its time. Keys: space toggles,
 n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, q quits. Run
-it in a short terminal or pane; it fills what it is given.
+it in a short terminal or pane; it fills what it is given. It follows the
+daemon through `watch`, and reconnects when the daemon restarts.
+
+Colours: `--theme powerlines` (the default: magenta and electric cyan on
+black), `--theme plain` (the terminal's own), or `--theme <file>` with
+`role = #rrggbb` lines over powerlines; roles are bg fg cyan magenta
+violet orange green dim.
 
     git clone --recursive https://github.com/rakwahye/mediamaster-notmmtui
     make && make test
