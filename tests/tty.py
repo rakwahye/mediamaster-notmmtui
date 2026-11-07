@@ -198,7 +198,10 @@ class Screen:
                 ch, f, b = self.g[y][x], self.f[y][x], self.b[y][x]
                 if not ch.strip() or not f or not b or f.startswith("idx") or b.startswith("idx"):
                     continue
-                if 0x2580 <= ord(ch[0]) <= 0x259f or ord(ch[0]) >= 0x1fb00:  # blocks are ground, not words
+                o = ord(ch[0])
+                # blocks, octants (Legacy Computing and its Supplement) and
+                # box lines are ground, not words
+                if 0x2500 <= o <= 0x259f or 0x1cc00 <= o <= 0x1cebf or o >= 0x1fb00:
                     continue
                 hi, lo = sorted((lum(f), lum(b)), reverse=True)
                 if (hi + 0.05) / (lo + 0.05) < 1.5:
