@@ -20,6 +20,32 @@ freezes, the spectrum falls.
 | wires | 3 | braille pylons and power lines; a comet rides to the playhead | `NCBLIT_BRAILLE` |
 | horizon | 4 | the reference's road: a grid rushing in on the beat, vanishing point = playhead | octants, half-block sky |
 
+## The larger view: stage
+
+Eight rows and more: the horizon grown into a scene. `out/notmmtui-stage.gif`
+is 12×100; `out/notmmtui-stage-sunset.png` the same scene at the start of
+a track, half way and near the end, at 10×100.
+
+![stage](out/notmmtui-stage-sunset.png)
+
+- A striped sun that **sets as the track plays**: high at the start,
+  half behind the mountains half way, gone near the end. The picture is
+  the progress, as the powerline row is.
+- Mountains of the bands either side of it, a dark silhouette, sinking
+  away from it so the words keep a clear sky.
+- A road from under the sun, five rails fanning out and three ties
+  coming in on the kick (a full perspective grid ran together: at a few
+  rows of ground its lines are nearly flat).
+- The title big, in a 5×7 font drawn in octants (3 cells by 2 rows a
+  letter); artist and album under it; what is next in the queue at the
+  right, two items, the queue overlay's place to open from.
+- A dashboard on the last row: state, time, a bar in the sky's colours
+  with an eighth-cell head, the duration, the L/R meter.
+- The words keep rows 0–4 at any height; the horizon is below them,
+  lower when tall. Few colours in the dots, as a cell holds two.
+
+    STAGE_P=0.5 python3 run.py 10 100 stage 21 out/set.dump   # at a given progress
+
 ## Run
 
 Needs Notcurses ≥ 3.0.17 (`notcurses-core`), Python 3 with Pillow, and

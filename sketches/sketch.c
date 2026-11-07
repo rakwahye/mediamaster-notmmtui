@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /** @file sketch.c
- * @brief notmmtui look sketches: five short strips, rendered by Notcurses
+ * @brief notmmtui look sketches: short strips, and a larger stage, rendered by Notcurses
  * and dumped cell by cell (glyph, fg, bg) after each frame so they can be
  * rasterised to images. Audio is synthetic; nothing talks to a daemon.
  *
@@ -560,6 +560,190 @@ static void horizon(struct notcurses *nc, struct ncplane *std, struct ncplane *t
 	ncplane_printf_yx(txt, 0, (int)cols - 14, "%s / %s", now, dur);
 }
 
+
+/* ------------------------------------------------------------------ 7. stage
+ * The larger view, eight rows and more: the horizon grown into a scene.
+ * A striped sun that sets as the track plays (high at the start, gone
+ * behind the mountains at the end); mountains of the bands either side of
+ * it; a grid floor radiating from it, its lines rushing in on the kick.
+ * Over the sky: the title big, in a 5x7 font drawn in octants, artist and
+ * album under it, what is next in the queue at the right. Along the
+ * bottom row a dashboard: state, time, a bar in the sky's colours, the
+ * meter. Paused: the sun and the floor stop, and breathe. */
+
+/* 5x7, rows top to bottom, bit 4 the left column. */
+static const struct { char c; unsigned char r[7]; } FONT[] = {
+	{ 'A', { 0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 } }, { 'B', { 0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e } },
+	{ 'C', { 0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e } }, { 'D', { 0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e } },
+	{ 'E', { 0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f } }, { 'F', { 0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10 } },
+	{ 'G', { 0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f } }, { 'H', { 0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 } },
+	{ 'I', { 0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e } }, { 'J', { 0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0c } },
+	{ 'K', { 0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11 } }, { 'L', { 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f } },
+	{ 'M', { 0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11 } }, { 'N', { 0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11 } },
+	{ 'O', { 0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e } }, { 'P', { 0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10 } },
+	{ 'Q', { 0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d } }, { 'R', { 0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11 } },
+	{ 'S', { 0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e } }, { 'T', { 0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 } },
+	{ 'U', { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e } }, { 'V', { 0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04 } },
+	{ 'W', { 0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a } }, { 'X', { 0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11 } },
+	{ 'Y', { 0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04 } }, { 'Z', { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f } },
+	{ '0', { 0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e } }, { '1', { 0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e } },
+	{ '2', { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f } }, { '3', { 0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e } },
+	{ '4', { 0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02 } }, { '5', { 0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e } },
+	{ '6', { 0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e } }, { '7', { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 } },
+	{ '8', { 0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e } }, { '9', { 0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c } },
+	{ '\'', { 0x04, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00 } }, { '-', { 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00 } },
+	{ '.', { 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c } }, { ' ', { 0 } },
+};
+
+static const unsigned char *glyph(char c)
+{
+	if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+	for (size_t i = 0; i < sizeof(FONT) / sizeof(FONT[0]); i++)
+		if (FONT[i].c == c) return FONT[i].r;
+	return FONT[sizeof(FONT) / sizeof(FONT[0]) - 1].r;
+}
+
+static const char *STAGE_TITLE = "Time";
+static const char *STAGE_ALBUM = "The Dark Side of the Moon";
+static const char *NEXT[] = { "The Great Gig in the Sky", "Money" };
+
+static void stage(struct notcurses *nc, struct ncplane *std, struct ncplane *txt, int f)
+{
+	unsigned rows, cols;
+	ncplane_dim_yx(std, &rows, &cols);
+	float p = getenv("STAGE_P") ? (float)atof(getenv("STAGE_P")) : progress(f), k = paused(f) ? 0.70f + 0.30f * breath(f) : 1.0f;
+	int W = (int)cols * 2, H = ((int)rows - 1) * 4;
+	/* the words have rows 0-4; the horizon is below them, and lower when tall */
+	int hz = (int)((float)H * 0.64f);
+	if (hz < 5 * 4 + 1) hz = 5 * 4 + 1;
+	float sx = (float)W * 0.50f, r = (float)hz * 0.36f;
+	/* the sun sets: centre from above the mountains to below the horizon */
+	float sy = (float)hz - r * 1.05f + p * r * 2.3f;
+	static float travel;
+	if (!paused(f)) travel += 0.03f + 0.10f * expf(-(float)(f % 8) * 0.6f);
+	ncplane_erase(std);
+	uint32_t *pix = calloc((size_t)W * H, 4);
+
+	for (int y = 0; y < H; y++)
+		for (int x = 0; x < W; x++) {
+			struct rgb c = BG;
+			if (y < hz) { /* the sky: dark, warming to the horizon, glowing round the sun */
+				float v = (float)y / (float)hz;
+				float dx = ((float)x - sx) / (float)W;
+				float g = expf(-dx * dx * 18.0f);
+				c = mix(BG, scale(VIOLET, 0.55f), v * v * 0.45f);
+				c = mix(c, scale(MAGENTA, 0.8f), v * v * v * g * 0.55f);
+				/* the sun: orange-white at the top to magenta, the lower half striped */
+				float ddx = (float)x / 2.0f - sx / 2.0f, ddy = (float)y - sy; /* dots are 2:1 */
+				if (ddx * ddx * 4.0f + ddy * ddy <= r * r) {
+					float t = (ddy + r) / (2 * r);
+					int gap = 0;
+					if (t > 0.5f) {
+						float band = fmodf((float)y + travel * 2.0f, 4.0f);
+						gap = band < (t - 0.5f) * 5.0f;
+					}
+					if (!gap) c = mix(mix(ORANGE, WHITE, 0.35f), MAGENTA, t * 1.1f);
+				}
+			}
+			pix[y * W + x] = px(scale(c, k), 255);
+		}
+	/* the mountains: the bands, mirrored about the sun, in front of it,
+	 * sinking away from it so the words keep a clear sky */
+	for (int x = 0; x < W; x++) {
+		float d = fabsf((float)x - sx) / ((float)W * 0.45f);
+		if (d >= 1) continue;
+		int b = (int)(d * 24.0f);
+		float h = band(b, 24, f) * (float)hz * 0.45f * (1.0f - d * d) + 1.0f;
+		for (int y = hz - (int)h; y < hz; y++)
+			if (y >= 0) pix[y * W + x] = px(scale(mix(BG, VIOLET, 0.10f), k), 255);
+	}
+	/* the horizon */
+	for (int x = 0; x < W; x++) {
+		float dx = ((float)x - sx) / (float)W;
+		pix[hz * W + x] = px(scale(mix(MAGENTA, mix(MAGENTA, WHITE, 0.6f), expf(-dx * dx * 40.0f)), k), 255);
+	}
+	/* the floor: a road from under the sun, its rails fanning out and three
+	 * ties coming in; one colour each, as a cell of dots holds two */
+	uint32_t railc = px(scale(mix(MAGENTA, WHITE, 0.10f), k), 255), tiec = px(scale(mix(BG, CYAN, 0.80f), k), 255);
+	float half = (float)W * 0.30f;
+	for (int i = 0; i < 3; i++) {
+		float d = fmodf((float)i / 3.0f + travel * 0.5f, 1.0f), u = d * d;
+		int y = hz + 2 + (int)(u * (float)(H - hz - 3) + 0.5f);
+		float w = half * ((float)(y - hz) / (float)(H - 1 - hz));
+		for (int x = (int)(sx - w); x <= (int)(sx + w); x++)
+			if (x >= 0 && x < W) pix[y * W + x] = tiec;
+	}
+	for (int l = -2; l <= 2; l++) {
+		int last = (int)sx;
+		for (int y = hz + 1; y < H; y++) {
+			float u = (float)(y - hz) / (float)(H - 1 - hz);
+			int x = (int)(sx + half * u * (float)l / 2.0f + 0.5f);
+			int a = last < x ? last : x, b = last < x ? x : last;
+			if (b - a > 1) a = last < x ? last + 1 : x;
+			for (int xx = a; xx <= b; xx++)
+				if (xx >= 0 && xx < W) pix[y * W + xx] = railc;
+			last = x;
+		}
+	}
+	/* the title, big: 5x7 letters, a dot apart, two dots below the top */
+	int tx = 4, ty = 3;
+	for (const char *c = STAGE_TITLE; *c; c++, tx += 6) {
+		const unsigned char *g = glyph(*c);
+		for (int gy = 0; gy < 7; gy++)
+			for (int gx = 0; gx < 5; gx++)
+				if (g[gy] >> (4 - gx) & 1) {
+					int X = tx + gx, Y = ty + gy;
+					if (X < W && Y < H) pix[Y * W + X] = px(FG, 255);
+				}
+	}
+	struct ncvisual *v = ncvisual_from_rgba(pix, H, W * 4, W);
+	struct ncvisual_options vo = { .n = std, .blitter = NCBLIT_4x2, .scaling = NCSCALE_NONE,
+	                               .flags = NCVISUAL_OPTION_NODEGRADE };
+	ncvisual_blit(nc, v, &vo);
+	ncvisual_destroy(v);
+	free(pix);
+
+	/* the words over it */
+	ncplane_erase(txt);
+	ncplane_set_bg_alpha(txt, NCALPHA_TRANSPARENT);
+	fg(txt, VIOLET);
+	ncplane_putstr_yx(txt, 3, 2, ARTIST);
+	fg(txt, DIM);
+	ncplane_printf_yx(txt, 4, 2, "%s", STAGE_ALBUM);
+	int nx = (int)cols - 28;
+	fg(txt, DIM);
+	ncplane_putstr_yx(txt, 0, nx, "next");
+	for (int i = 0; i < 2; i++) {
+		fg(txt, i ? DIM : mix(DIM, FG, 0.5f));
+		ncplane_printf_yx(txt, 1 + i, nx, "%d %s", i + 1, NEXT[i]);
+	}
+
+	/* the dashboard: state, time, a bar in the sky's colours, the meter */
+	int y = (int)rows - 1;
+	char now[16], dur[16];
+	clock_str(now, sizeof(now), p * DUR);
+	clock_str(dur, sizeof(dur), DUR);
+	fg(txt, paused(f) ? mix(DIM, ORANGE, breath(f)) : MAGENTA);
+	ncplane_putstr_yx(txt, y, 1, paused(f) ? "‖" : "▶");
+	fg(txt, CYAN);
+	ncplane_putstr_yx(txt, y, 3, now);
+	int bx = 9, bw = (int)cols - 9 - 13, head = (int)(p * (float)bw);
+	for (int x = 0; x < bw; x++) {
+		struct rgb c = sky((float)x / (float)bw);
+		fg(txt, x < head ? c : mix(BG, DIM, 0.8f));
+		ncplane_putstr_yx(txt, y, bx + x, x < head ? "━" : x == head ? "╸" : "─");
+	}
+	fg(txt, FG);
+	ncplane_putstr_yx(txt, y, bx + head, "╸");
+	fg(txt, DIM);
+	ncplane_putstr_yx(txt, y, bx + bw + 1, dur);
+	int l = (int)(band(1, 24, f) * 8), rr = (int)(band(3, 24, f) * 8);
+	fg(txt, CYAN);
+	ncplane_putstr_yx(txt, y, (int)cols - 3, EIGHTHS[l > 8 ? 8 : l]);
+	fg(txt, MAGENTA);
+	ncplane_putstr_yx(txt, y, (int)cols - 2, EIGHTHS[rr > 8 ? 8 : rr]);
+}
+
 /* ------------------------------------------------------------------ main */
 
 typedef void (*concept_fn)(struct notcurses *, struct ncplane *, struct ncplane *, int);
@@ -585,7 +769,7 @@ int main(int argc, char **argv)
 	if (argc != 4) return 2;
 	static const struct { const char *name; concept_fn fn; } C[] = {
 		{ "powerline", powerline }, { "wires", wires }, { "road", road },
-		{ "plasma", plasma }, { "scope", scope }, { "horizon", horizon },
+		{ "plasma", plasma }, { "scope", scope }, { "horizon", horizon }, { "stage", stage },
 	};
 	concept_fn fn = NULL;
 	for (size_t i = 0; i < sizeof(C) / sizeof(C[0]); i++)
