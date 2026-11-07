@@ -90,6 +90,9 @@ class Screen:
                 self.g[y][x] = ch
                 self.f[y][x] = oldfg[y][x]
                 self.b[y][x] = oldbg[y][x]
+        # the cursor stays on the screen, as a terminal keeps it: output
+        # meant for the old size may still be on its way
+        self.y, self.x = min(getattr(self, "y", 0), r - 1), min(getattr(self, "x", 0), c)
 
     def sgr(self, params):
         p = [int(v) if v.isdigit() else 0 for v in re.split("[;:]", params)] if params else [0]
