@@ -22,11 +22,20 @@ bars across the whole width, bright up to the playhead and dim after it,
 with peaks that hold and fall; the last row is a wet road with their
 reflection and the words of one row on it.
 
-Four rows or more: `--look horizon`, the default there. A road runs to a
+Four to eight rows: `--look horizon`, the default there. A road runs to a
 sun on the horizon, and the sun is the playhead; the mountains either side
 are the bands, bass by the sun; the cross-ties rush in faster as it gets
-louder and on every beat. The words are on the sky above. `l` switches
-between the looks the strip is tall enough for, as it runs. Keys: space toggles,
+louder and on every beat. The words are on the sky above.
+
+Nine rows or more: `--look stage`, the default there; a sun setting over
+a lake. The sun is the playhead on an arc, rising at the left as the
+track starts and setting at the right at its end; stars over it, and
+mountains of the bands on the horizon. The lake mirrors it all, the
+sun's light a broken column on it, glints on the water as loud as the
+music. The title is big, in a 5×7 font drawn in octants, bigger as the
+stage is taller; artist and album under it; the time, a bar and the
+meter along the bottom. `l` switches between the looks the strip is tall
+enough for, as it runs. Keys: space toggles,
 n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits. Run
 it in a short terminal or pane; it fills what it is given. It follows the
 daemon through `watch`, and reconnects when the daemon restarts.

@@ -248,6 +248,8 @@ if command -v ffmpeg >/dev/null; then
 	$TTY 2 100 "$TUI" 'wait:4:00' 'legible:2' key:q || fail "scope on pulses: still legible"
 	$TTY 3 100 "$TUI" 'wait:/ 4:00' 'moving:10@1' 'legible:2' key:q || fail "road on pulses: the bars move, the words legible"
 	$TTY 4 100 "$TUI" 'wait:/ 4:00' 'legible:2' key:q || fail "horizon on pulses: the words legible over the sun"
+	$TTY 12 100 "$TUI" 'wait:4:00' 'legible:2' key:q || fail "stage on pulses: the words legible"
+	$TTY 30 120 "$TUI" 'wait:4:00' 'legible:2' key:q || fail "stage, tall, on pulses: the words legible"
 fi
 
 # two rows: the scope, unasked; the words on two rows, the meter two cells
@@ -277,6 +279,15 @@ $TTY 4 100 "$TUI" 'wait:/ 4:00' 'fgat:0@0=ff2bd6' 'moving:50@3' 'size:3,100' 'fg
 	'size:4,100' 'fgat:0@0=ff2bd6' 'key: ' 'wait:‖' 'key: ' 'wait:▶' key:q ||
 	fail "horizon: four rows, three, four again; a pause"
 $TTY 3 100 "$TUI --look horizon" 'wait:/ 4:00' key:q || fail "horizon on three rows: powerline"
+
+# nine rows: the stage, unasked; the dashboard on the last row (the state
+# and the duration), the lake moving under the sun (the playhead, half way,
+# so in the middle); four rows is horizon again, ten stage; a pause. The
+# title is drawn big where there are octants, so it is not looked for
+$TTY 10 100 "$TUI" 'wait:4:00' 'fgat:1@9=ff2bd6' 'gone:/ 4:00' 'moving:50@8' 'size:4,100' 'wait:/ 4:00' \
+	'size:10,100' 'gone:/ 4:00' 'fgat:1@9=ff2bd6' 'key: ' 'wait:‖' 'key: ' 'wait:▶' key:q ||
+	fail "stage: ten rows, four, ten again; a pause"
+$TTY 8 100 "$TUI --look stage" 'wait:/ 4:00' key:q || fail "stage on eight rows: powerline"
 "$MMCTL" play sine:440:30 >/dev/null
 
 # the position counts on between reads; the daemon goes, comes back, is followed

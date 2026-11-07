@@ -3,9 +3,9 @@
  * @brief notmmtui: a strip of a player for the mediamaster daemon.
  *
  *   notmmtui [--socket <path>] [--theme powerlines|plain|<file>]
- *            [--look powerline|plasma|scope|road|horizon|plain]
- *                        the strip, in the whole terminal (make it short);
- *                        with no --look, horizon from four rows, road on
+ *            [--look powerline|plasma|scope|road|horizon|stage|plain]
+ *                        the strip, in the whole terminal; with no --look,
+ *                        stage from nine rows, horizon from four, road on
  *                        three, scope on two, powerline on one
  *   notmmtui [--socket <path>] --version
  *                        this client's version and the daemon's
@@ -65,7 +65,7 @@
 static void usage(FILE *f)
 {
 	fputs("usage: notmmtui [--socket <path>] [--theme powerlines|plain|<file>]\n"
-	      "                [--look powerline|plasma|scope|road|horizon|plain]\n"
+	      "                [--look powerline|plasma|scope|road|horizon|stage|plain]\n"
 	      "       notmmtui [--socket <path>] --version\n"
 	      "socket: --socket, else $MM_SOCK, else the daemon's default\n", f);
 }
@@ -439,7 +439,7 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "--look") && i + 1 < argc) {
 			look = strip_look_find(argv[++i]);
 			if (look < 0) {
-				fprintf(stderr, "notmmtui: no look %s (powerline, plasma, scope, road, horizon, plain)\n", argv[i]);
+				fprintf(stderr, "notmmtui: no look %s (powerline, plasma, scope, road, horizon, stage, plain)\n", argv[i]);
 				return 2;
 			}
 		} else if ((!strcmp(a, "--socket") || !strcmp(a, "--theme")) && i + 1 < argc) {

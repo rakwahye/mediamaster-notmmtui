@@ -60,6 +60,24 @@
  *              on every beat. The sun, where the road meets the horizon,
  *              is the playhead. A pause stops the road.
  *
+ *   stage      nine rows or more: the horizon grown into a scene, a sun
+ *              setting over a lake. The sun is the playhead on an arc:
+ *              rising at the left as the track starts, highest half way,
+ *              setting at the right at its end (where nothing says how
+ *              long, high in the middle). It is striped, the sky warmer
+ *              round it when it is low; stars twinkle in the dark above,
+ *              clear of the words; mountains of the bands stand on the
+ *              horizon as a silhouette. Below is the lake: the sky, the
+ *              sun and the mountains mirrored, darker and bluer, the sun's
+ *              light a broken column on it, glints drifting in, more as it
+ *              gets louder. The title is big, in a 5x7 font drawn in
+ *              octants and as much bigger as the stage is tall
+ *              (strip_stage_scale), outlined so the sun can pass behind
+ *              it; small where there are no octants or the font lacks a
+ *              letter. Artist and album are under it on a veil. The last
+ *              row is a dashboard: state, time, a bar in the sky's colours,
+ *              the duration, the meter.
+ *
  * A theme with no colours of its own (plain) is drawn in the plain look,
  * and a look taller than the strip (strip_look_rows) in powerline. With
  * no look asked for, the height picks one (strip_look_for).
@@ -92,11 +110,11 @@
 
 struct ncplane;
 
-enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_SCOPE, STRIP_ROAD, STRIP_HORIZON, STRIP_PLAIN, STRIP_LOOKS };
+enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_SCOPE, STRIP_ROAD, STRIP_HORIZON, STRIP_STAGE, STRIP_PLAIN, STRIP_LOOKS };
 
 #define STRIP_FRAME_MS 66 /* about 15 frames a second, for a look that moves */
 
-/** "powerline", "plasma", "scope", "road", "horizon", "plain". */
+/** "powerline", "plasma", "scope", "road", "horizon", "stage", "plain". */
 const char *strip_look_name(int look);
 
 /** The look named `name`, or -1. */
@@ -105,8 +123,8 @@ int strip_look_find(const char *name);
 /** Whether `look` moves while playing (and needs frames, not ticks). */
 int strip_look_moves(int look);
 
-/** The rows `look` needs: 2 for scope, 3 for road, 4 for horizon, 1 for
- * the rest. */
+/** The rows `look` needs: 2 for scope, 3 for road, 4 for horizon, 9 for
+ * stage, 1 for the rest. */
 int strip_look_rows(int look);
 
 /** The look for a strip `rows` high when none was asked for. */
@@ -202,6 +220,20 @@ double strip_horizon_tie(int i, int n, double t);
 /** A mountain's height, 0..1, at d from the sun (0) to the edge farther
  * from it (1): the bands from the lowest by the sun to the highest. */
 double strip_horizon_hill(const float *band, double d);
+
+/** How many dots a side one dot of the stage's big title is, for a stage
+ * `rows` high: rows / 11, from 1 to 4. */
+int strip_stage_scale(unsigned rows);
+
+/** Where the stage's sun is at progress p (0..1): *x across (0 left ..
+ * 1 right) and *alt, how high on its arc (0 on the horizon .. 1 at the
+ * top). */
+void strip_stage_sun(double p, double *x, double *alt);
+
+/** `s` for the big title: capitals, at most `max` letters (the last three
+ * "..." when it is cut), into `out`. @returns the letters, or 0 when the
+ * font cannot draw one of them (the title is then drawn small). */
+int strip_big_text(const char *s, char *out, size_t n, int max);
 
 /** "m:ss", or "h:mm:ss" from an hour. */
 void strip_clock(char *buf, size_t cap, double s);

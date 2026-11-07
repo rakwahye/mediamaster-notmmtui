@@ -3,6 +3,7 @@
  * @brief The strip: state, title, artist, time, on the ground of a look. */
 
 #include "strip.h"
+#include "font.h"
 #include "ipc.h"
 #include <math.h>
 #include <notcurses/notcurses.h>
@@ -50,7 +51,8 @@ void strip_clock(char *buf, size_t cap, double s)
 }
 
 static const char *const LOOK[STRIP_LOOKS] = {
-	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_SCOPE] = "scope", [STRIP_ROAD] = "road", [STRIP_HORIZON] = "horizon", [STRIP_PLAIN] = "plain",
+	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_SCOPE] = "scope", [STRIP_ROAD] = "road", [STRIP_HORIZON] = "horizon", [STRIP_STAGE] = "stage",
+	[STRIP_PLAIN] = "plain",
 };
 
 const char *strip_look_name(int look) { return look >= 0 && look < STRIP_LOOKS ? LOOK[look] : "?"; }
@@ -66,12 +68,13 @@ int strip_look_moves(int look) { return look != STRIP_POWERLINE && look != STRIP
 
 int strip_look_rows(int look)
 {
-	return look == STRIP_SCOPE ? 2 : look == STRIP_ROAD ? 3 : look == STRIP_HORIZON ? 4 : 1;
+	return look == STRIP_SCOPE ? 2 : look == STRIP_ROAD ? 3 : look == STRIP_HORIZON ? 4 : look == STRIP_STAGE ? 9 : 1;
 }
 
 int strip_look_for(unsigned rows)
 {
-	return rows >= 4 ? STRIP_HORIZON : rows == 3 ? STRIP_ROAD : rows == 2 ? STRIP_SCOPE : STRIP_POWERLINE;
+	return rows >= 9 ? STRIP_STAGE : rows >= 4 ? STRIP_HORIZON : rows == 3 ? STRIP_ROAD
+	     : rows == 2 ? STRIP_SCOPE : STRIP_POWERLINE;
 }
 
 int strip_look_next(int look, unsigned rows)
@@ -210,6 +213,37 @@ double strip_horizon_tie(int i, int n, double t)
 double strip_horizon_hill(const float *band, double d)
 {
 	return strip_road_bar(band, d < 0 ? 0 : d > 1 ? 1 : d);
+}
+
+int strip_stage_scale(unsigned rows)
+{
+	int sc = (int)rows / 11;
+	return sc < 1 ? 1 : sc > 4 ? 4 : sc;
+}
+
+void strip_stage_sun(double p, double *x, double *alt)
+{
+	p = p < 0 ? 0 : p > 1 ? 1 : p;
+	*x = 0.06 + 0.88 * p;
+	*alt = sin(M_PI * p);
+}
+
+int strip_big_text(const char *s, char *out, size_t n, int max)
+{
+	int len = 0;
+	for (const unsigned char *c = (const unsigned char *)s; *c; c++) {
+		if (!font5x7(*c)) return 0;
+		len++;
+	}
+	if (max < 1 || n < 2) return 0;
+	int keep = len <= max ? len : max > 3 ? max - 3 : max;
+	if ((size_t)keep >= n) keep = (int)n - 1;
+	int i = 0;
+	for (; i < keep; i++) out[i] = (char)(s[i] >= 'a' && s[i] <= 'z' ? s[i] - ('a' - 'A') : s[i]);
+	if (len > max && max > 3)
+		for (int d = 0; d < 3 && (size_t)i < n - 1; d++) out[i++] = '.';
+	out[i] = '\0';
+	return i;
 }
 
 int strip_bar(unsigned cols, double pos, double duration)
@@ -800,6 +834,222 @@ static void horizon_ground(const struct strip_model *m, const struct theme *t, s
 	free(px);
 }
 
+/* ------------------------------------------------------------------ stage */
+
+/* A steady noise, 0..1, for stars, glints and the sun's broken column. */
+static double noise(int a, int b)
+{
+	unsigned x = (unsigned)a * 0x9e3779b1u + 0x7f4a7c15u;
+	x ^= x >> 16;
+	x *= 0x85ebca6bu;
+	x += (unsigned)b * 0xc2b2ae35u;
+	x ^= x >> 15;
+	x *= 2246822519u;
+	x ^= x >> 13;
+	x *= 3266489917u;
+	x ^= x >> 16;
+	return (x & 0xffff) / 65535.0;
+}
+
+/* The stage's layout, in cells: the words take rows [0, words); the
+ * title's letters are big when big > 0; the left words end at `left`, the
+ * right ones (what is next) start at `right`. */
+struct stage_at {
+	int sc, words, big, left, right;
+	char title[64];
+};
+
+static struct stage_at stage_at(const struct strip_model *m, unsigned rows, unsigned cols, int octants)
+{
+	struct stage_at a = { .sc = strip_stage_scale(rows) };
+	a.right = cols >= 70 ? (int)cols - 30 : (int)cols;
+	const char *title = m->st.title[0] ? m->st.title : m->st.uri;
+	int room = (a.right - 2 - 2) / (3 * a.sc);
+	if (octants) a.big = strip_big_text(title, a.title, sizeof(a.title), room);
+	a.words = a.big ? 2 * a.sc + 3 : 3;
+	int lw = a.big ? 2 + 3 * a.sc * a.big : 2 + text_cols(title);
+	int aw = 2 + text_cols(m->st.artist), bw = 2 + text_cols(m->st.album);
+	a.left = lw > aw ? lw : aw;
+	a.left = a.left > bw ? a.left : bw;
+	return a;
+}
+
+static void stage_ground(const struct strip_model *m, const struct theme *t, struct ncplane *n,
+                         unsigned rows, unsigned cols, const struct stage_at *a)
+{
+	plain_ground(n, t, rows, cols);
+	int dy, dx;
+	ncblitter_e how = dots(ncplane_notcurses(n), &dy, &dx);
+	int W = (int)cols * dx, H = ((int)rows - 1) * dy;
+	int hz = (int)(H * 0.58);
+	if (hz < a->words * dy + 1) hz = a->words * dy + 1;
+	if (W <= 0 || hz >= H - 2) return;
+	uint32_t bg = (uint32_t)t->c[TH_BG], fg = (uint32_t)t->c[TH_FG], cyan = (uint32_t)t->c[TH_CYAN],
+	         magenta = (uint32_t)t->c[TH_MAGENTA], violet = (uint32_t)t->c[TH_VIOLET],
+	         orange = (uint32_t)t->c[TH_ORANGE];
+	double k = m->st.state == TUI_PAUSED ? breathe(BREATH_LOW, m->breath) : 1.0;
+	double now = m->anim, level = m->levels ? m->rx.level : 0;
+	double p = m->st.duration > 0 ? m->pos / m->st.duration : 0.5, ux, alt;
+	strip_stage_sun(p, &ux, &alt);
+	double r = hz * 0.30, sx = W * ux;
+	double sy = hz + r * 0.55 - alt * (hz - r * 0.45 - 1); /* rising, high, setting */
+	double warm = 1.0 - 0.6 * alt;                          /* a low sun, a warmer sky */
+	uint32_t *c = malloc(sizeof(uint32_t) * (size_t)W * (size_t)H);
+	if (!c) return;
+
+	/* the sky, and the sun: orange-white at the top to magenta, its lower
+	 * half striped, the stripes rising */
+	for (int y = 0; y < hz; y++)
+		for (int x = 0; x < W; x++) {
+			double v = (double)y / hz, d = (x - sx) / W, g = exp(-d * d * 14.0);
+			uint32_t px = rgb_mix(bg, violet, 0.25 * v * v);
+			px = rgb_mix(px, rgb_mix(magenta, orange, 0.3 * warm), v * v * v * g * (0.30 + 0.35 * warm));
+			double ex = (x - sx) / dx * 2.0, ey = (y - sy) * 4.0 / dy; /* the sun is round in cells */
+			double rr = r * 4.0 / dy;
+			if (ex * ex + ey * ey <= rr * rr) {
+				double u = (ey + rr) / (2 * rr);
+				int gap = u > 0.5 && fmod(y * 4.0 / dy + now * 1.5, 4.0) < (u - 0.5) * 5.0;
+				if (!gap) px = rgb_mix(rgb_mix(orange, fg, 0.35), magenta, u * 1.1 > 1 ? 1 : u * 1.1);
+			}
+			c[y * W + x] = px;
+		}
+	/* stars, in the dark above, twinkling; clear of the sun and the words */
+	for (int i = 0; i < W * hz / 90; i++) {
+		int x = (int)(noise(i, 1) * W), y = (int)(noise(i, 2) * hz * 0.80);
+		double ex = (x - sx) / dx * 2.0, ey = (y - sy) * 4.0 / dy, rr = r * 4.0 / dy;
+		if (ex * ex + ey * ey <= rr * rr * 1.3) continue;
+		if (y / dy < a->words && (x / dx <= a->left + 1 || x / dx >= a->right - 1)) continue;
+		double tw = 0.5 + 0.5 * sin(now * (1.5 + 3.5 * noise(i, 4)) + 6.28 * noise(i, 5));
+		uint32_t sc = noise(i, 6) > 0.8 ? cyan : noise(i, 6) > 0.6 ? magenta : fg;
+		c[y * W + x] = rgb_mix(bg, sc, (0.25 + 0.55 * tw) * (1.0 - (double)y / hz));
+	}
+	/* the mountains: the bands, about the middle, a silhouette */
+	uint32_t hill = rgb_mix(bg, violet, 0.10);
+	for (int x = 0; x < W; x++) {
+		double d = fabs(x - W / 2.0) / (W / 2.0);
+		double h = (m->levels ? strip_road_bar(m->rx.band, d) : 0) * hz * 0.40 * (1.0 - 0.6 * d * d) + 1;
+		for (int y = hz - (int)h; y < hz; y++)
+			if (y >= 0) c[y * W + x] = hill;
+	}
+	/* the horizon, hot under the sun */
+	for (int x = 0; x < W; x++) {
+		double d = (x - sx) / W;
+		c[hz * W + x] = rgb_mix(magenta, rgb_mix(magenta, fg, 0.6), exp(-d * d * 40.0));
+	}
+	/* the lake: the sky mirrored, darker and bluer; the sun's broken column;
+	 * glints drifting in, as many as it is loud */
+	double drift = now * 5.0;
+	for (int y = hz + 1; y < H; y++) {
+		int my = 2 * hz - y;
+		double u = (double)(y - hz) / (H - 1 - hz); /* 0 far .. 1 near */
+		for (int x = 0; x < W; x++)
+			c[y * W + x] = my >= 0 ? rgb_mix(bg, rgb_mix(c[my * W + x], cyan, 0.12), 0.55 - 0.25 * u) : bg;
+		if (sy - r < hz) {
+			double up = (hz - (sy - r)) / (2 * r);
+			double w = r * (0.45 + 0.75 * u) * (up > 1 ? 1 : up);
+			uint32_t sun = rgb_mix(rgb_mix(orange, magenta, 0.35 + 0.4 * u), fg, 0.15);
+			sun = rgb_mix(bg, sun, 0.55 + 0.45 * (1 - u));
+			for (int x = (int)(sx - w); x <= (int)(sx + w); x++)
+				if (x >= 0 && x < W && noise(y, (int)(x / 3.0 + drift * (0.5 + u))) > 0.45 - 0.2 * u)
+					c[y * W + x] = sun;
+		}
+		int glints = 3 + (int)(level * 9);
+		for (int i = 0; i < glints; i++) {
+			int x = (int)fmod(noise(y, i) * W + drift * (2.0 + 6.0 * u) * (noise(i, y) - 0.5), W);
+			if (x < 0) x += W;
+			uint32_t gc = rgb_mix(bg, noise(i, y + 3) > 0.5 ? cyan : magenta, 0.35 + 0.5 * u);
+			for (int j = 0; j < 2 + (int)(u * 6) && x + j < W; j++) c[y * W + x + j] = gc;
+		}
+	}
+	/* the title, big, outlined dark so the sun can pass behind it; letters
+	 * not yet settled after a track change are noise */
+	if (a->big) {
+		int sc = a->sc;
+		for (int pass = 0; pass < 2; pass++)
+			for (int i = 0; i < a->big; i++) {
+				const unsigned char *g = font5x7((unsigned char)a->title[i]);
+				int settled = m->decode >= STRIP_SETTLED || strip_settled((size_t)i, m->decode);
+				int cx = 4 + (FONT_W + FONT_GAP) * sc * i;
+				for (int gy = 0; gy < FONT_H; gy++)
+					for (int gx = 0; gx < FONT_W; gx++) {
+						int on = settled ? g[gy] >> (FONT_W - 1 - gx) & 1
+						                 : noise(i * 37 + gy * 5 + gx, (int)(m->decode * 15)) > 0.6;
+						if (!on || (!settled && pass == 0)) continue;
+						for (int oy = pass ? 0 : -1; oy <= sc - (pass ? 1 : 0); oy++)
+							for (int ox = pass ? 0 : -1; ox <= sc - (pass ? 1 : 0); ox++) {
+								int X = cx + gx * sc + ox, Y = 3 + gy * sc + oy;
+								if (X >= 0 && Y >= 0 && X < W && Y < hz)
+									c[Y * W + X] = pass ? (settled ? fg : cyan) : bg;
+							}
+					}
+			}
+	}
+	for (int i = 0; i < W * H; i++) c[i] = pixel(rgb_mix(bg, c[i], k));
+	blit(n, c, W, H, 0, 0, how);
+	free(c);
+}
+
+/* The stage's words: the title small where it is not drawn big, artist and
+ * album under it on a veil, and the dashboard on the last row. */
+static void stage_words(struct pen *p, const struct strip_model *m, unsigned rows, unsigned cols,
+                        const struct stage_at *a)
+{
+	const struct theme *t = p->t;
+	const struct tui_status *st = &m->st;
+	p->veil = 1;
+	p->age = m->decode < STRIP_SETTLED ? m->decode : -1;
+	p->k = 0;
+	if (!a->big) {
+		p->y = 0;
+		if (t->bold_title) ncplane_set_styles(p->n, NCSTYLE_BOLD);
+		say(p, TH_FG, 2, st->title[0] ? st->title : st->uri, a->right - 1);
+		ncplane_set_styles(p->n, NCSTYLE_NONE);
+	}
+	if (st->artist[0]) {
+		p->y = a->words - 2;
+		say(p, TH_VIOLET, 2, st->artist, a->right - 1);
+	}
+	p->age = -1;
+	if (st->album[0]) {
+		p->y = a->words - 1;
+		say(p, TH_DIM, 2, st->album, a->right - 1);
+	}
+	p->veil = 0;
+
+	/* the dashboard */
+	int y = (int)rows - 1, paused = st->state == TUI_PAUSED;
+	p->y = y;
+	if (paused && t->c[TH_ORANGE] != THEME_DEFAULT && t->c[TH_DIM] != THEME_DEFAULT)
+		p->fg = (int32_t)rgb_mix((uint32_t)t->c[TH_DIM], (uint32_t)t->c[TH_ORANGE], m->breath);
+	say(p, paused ? TH_ORANGE : TH_MAGENTA, 1, paused ? "‖" : "▶", 2);
+	p->fg = -1;
+	char now[16], dur[16];
+	strip_clock(now, sizeof(now), m->pos);
+	int live = st->duration <= 0;
+	if (live) snprintf(dur, sizeof(dur), "live");
+	else strip_clock(dur, sizeof(dur), st->duration);
+	int x = say(p, TH_CYAN, 3, now, (int)cols) + 1;
+	int meter = m->levels ? 3 : 0;
+	int end = (int)cols - text_cols(dur) - 2 - meter;
+	if (end - x >= 4) {
+		int w = end - x, head = live ? -1 : (int)(m->pos / st->duration * w);
+		for (int i = 0; i < w; i++) {
+			int played = i < head;
+			p->fg = played ? (int32_t)strip_sky(t, (i + 0.5) / w)
+			               : (int32_t)rgb_mix((uint32_t)t->c[TH_BG], (uint32_t)t->c[TH_DIM], 0.8);
+			if (i == head) p->fg = (int32_t)t->c[TH_FG];
+			say(p, TH_DIM, x + i, played ? "━" : i == head ? "╸" : "─", x + i + 1);
+		}
+		p->fg = -1;
+	}
+	say(p, live ? TH_GREEN : TH_DIM, (int)cols - text_cols(dur) - 1 - meter, dur, (int)cols - meter);
+	if (meter) {
+		static const char *const H[9] = { " ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" };
+		say(p, TH_CYAN, (int)cols - 2, H[strip_meter_eighths(m->lv.peak[0])], (int)cols - 1);
+		say(p, TH_MAGENTA, (int)cols - 1, H[strip_meter_eighths(m->lv.peak[1])], (int)cols);
+	}
+}
+
 /* ------------------------------------------------------------------ strip */
 
 struct strip *strip_new(struct ncplane *base)
@@ -853,6 +1103,25 @@ void strip_draw(struct strip *s, const struct strip_model *m, const struct theme
 		ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
 		struct pen p = { .n = s->text, .t = t, .age = -1, .fg = -1 };
 		row(&p, m, cols, 1);
+		return;
+	}
+	if (look == STRIP_STAGE) {
+		int going = m->daemon && !m->msg[0] && !m->refused[0] &&
+		            (m->st.state == TUI_PLAYING || m->st.state == TUI_PAUSED);
+		ncplane_erase(s->text);
+		ncplane_set_styles(s->text, NCSTYLE_NONE);
+		ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
+		struct pen p = { .n = s->text, .t = t, .age = -1, .fg = -1 };
+		if (!going) { /* a dark stage and the one-row words: stopped, gone, refused */
+			plain_ground(s->base, t, rows, cols);
+			row(&p, m, cols, 0);
+			return;
+		}
+		int dy, dx;
+		dots(ncplane_notcurses(s->base), &dy, &dx);
+		struct stage_at a = stage_at(m, rows, cols, dy == 4 && dx == 2);
+		stage_ground(m, t, s->base, rows, cols, &a);
+		stage_words(&p, m, rows, cols, &a);
 		return;
 	}
 	if (look == STRIP_HORIZON) {

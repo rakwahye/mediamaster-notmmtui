@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /* The strip's arithmetic: the playhead, the sky, the ink. */
 #include "strip.h"
+#include "font.h"
 #include "check.h"
 #include <math.h>
 #include <string.h>
@@ -104,7 +105,8 @@ static int looks(void)
 	CHECK(strip_look_for(1) == STRIP_POWERLINE, "one row: powerline");
 	CHECK(strip_look_for(2) == STRIP_SCOPE, "two rows: scope");
 	CHECK(strip_look_for(3) == STRIP_ROAD, "three rows: road");
-	CHECK(strip_look_for(4) == STRIP_HORIZON && strip_look_for(9) == STRIP_HORIZON, "four rows or more: horizon");
+	CHECK(strip_look_for(4) == STRIP_HORIZON && strip_look_for(8) == STRIP_HORIZON, "four to eight rows: horizon");
+	CHECK(strip_look_for(9) == STRIP_STAGE && strip_look_for(60) == STRIP_STAGE, "nine rows or more: stage");
 	CHECK(strip_look_next(STRIP_PLASMA, 1) == STRIP_PLAIN, "one row: scope is skipped");
 	CHECK(strip_look_next(STRIP_PLAIN, 1) == STRIP_POWERLINE, "and round again");
 	CHECK(strip_look_next(STRIP_PLASMA, 2) == STRIP_SCOPE, "two rows: scope is one of them");
@@ -115,6 +117,9 @@ static int looks(void)
 	CHECK(strip_look_next(STRIP_ROAD, 4) == STRIP_HORIZON, "four rows: horizon too");
 	CHECK(strip_look_find("horizon") == STRIP_HORIZON && strip_look_moves(STRIP_HORIZON), "horizon, and it moves");
 	CHECK(!strip_look_moves(STRIP_POWERLINE) && !strip_look_moves(STRIP_PLAIN), "powerline and plain do not");
+	CHECK(strip_look_next(STRIP_HORIZON, 8) == STRIP_PLAIN, "eight rows: not stage");
+	CHECK(strip_look_next(STRIP_HORIZON, 9) == STRIP_STAGE, "nine rows: stage too");
+	CHECK(strip_look_find("stage") == STRIP_STAGE && strip_look_moves(STRIP_STAGE), "stage, and it moves");
 	CHECK(strip_look_find("scope") == STRIP_SCOPE && strip_look_moves(STRIP_SCOPE), "scope, and it moves");
 	return 0;
 }
@@ -162,6 +167,38 @@ static int horizon(void)
 	return 0;
 }
 
+static int stage(void)
+{
+	const unsigned char *a = font5x7('A');
+	CHECK(a && a[0] == 0x0e && a[3] == 0x1f, "A: a peak and a bar");
+	CHECK(font5x7('a') == a, "a small letter is its capital");
+	CHECK(font5x7(' ') && !font5x7(' ')[3], "a space is blank");
+	CHECK(!font5x7('#') && !font5x7(0xc3), "no glyph: NULL");
+
+	char out[64];
+	CHECK(strip_big_text("Time", out, sizeof(out), 20) == 4 && !strcmp(out, "TIME"), "in capitals");
+	CHECK(strip_big_text("The Great Gig", out, sizeof(out), 8) == 8 && !strcmp(out, "THE G..."), "cut, with dots");
+	CHECK(strip_big_text("Abc", out, sizeof(out), 3) == 3 && !strcmp(out, "ABC"), "just fits: not cut");
+	CHECK(strip_big_text("Caf\xc3\xa9", out, sizeof(out), 20) == 0, "a letter the font lacks: small instead");
+	CHECK(strip_big_text("#1", out, sizeof(out), 20) == 0, "so is a sign it lacks");
+	CHECK(strip_big_text("Hi", out, 2, 20) == 1, "never past the end of out");
+
+	CHECK(strip_stage_scale(9) == 1 && strip_stage_scale(21) == 1, "under 22 rows: a dot a dot");
+	CHECK(strip_stage_scale(22) == 2 && strip_stage_scale(33) == 3, "then bigger");
+	CHECK(strip_stage_scale(200) == 4, "and no bigger than 4");
+
+	double x, alt;
+	strip_stage_sun(0, &x, &alt);
+	CHECK(x < 0.1 && alt == 0, "the start: rising at the left");
+	strip_stage_sun(0.5, &x, &alt);
+	CHECK(fabs(x - 0.5) < 1e-9 && fabs(alt - 1) < 1e-9, "half way: highest, in the middle");
+	strip_stage_sun(1, &x, &alt);
+	CHECK(x > 0.9 && alt < 1e-9, "the end: setting at the right");
+	strip_stage_sun(3, &x, &alt);
+	CHECK(x > 0.9 && x <= 1 && alt < 1e-9, "past the end: still set");
+	return 0;
+}
+
 static int road(void)
 {
 	float band[TUI_BANDS] = { 0 };
@@ -198,5 +235,6 @@ int main(void)
 	RUN(scope);
 	RUN(road);
 	RUN(horizon);
+	RUN(stage);
 	CHECK_PASS("test-strip");
 }
