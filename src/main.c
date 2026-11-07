@@ -405,6 +405,10 @@ static int run(const struct theme *theme, int look)
 			m.msg[0] = '\0';
 			dirty = 1;
 		}
+		if (m.quiet != ov->open) { /* under the queue's glass, the look alone */
+			m.quiet = ov->open;
+			dirty = 1;
+		}
 		if (dirty) {
 			strip_draw(strip, &m, theme);
 			overlay_draw(ov, theme, m.msg, rows, cols);

@@ -991,7 +991,7 @@ static void stage_ground(const struct strip_model *m, const struct theme *t, str
 	}
 	/* the title, big, outlined dark so the sun can pass behind it; letters
 	 * not yet settled after a track change are noise */
-	if (a->big) {
+	if (a->big && !m->quiet) {
 		int sc = a->sc;
 		for (int pass = 0; pass < 2; pass++)
 			for (int i = 0; i < a->big; i++) {
@@ -1127,7 +1127,7 @@ void strip_free(struct strip *s)
 	free(s);
 }
 
-void strip_draw(struct strip *s, const struct strip_model *m, const struct theme *t)
+static void draw(struct strip *s, const struct strip_model *m, const struct theme *t)
 {
 	unsigned rows, cols, tr, tc;
 	ncplane_dim_yx(s->base, &rows, &cols);
@@ -1197,4 +1197,10 @@ void strip_draw(struct strip *s, const struct strip_model *m, const struct theme
 	struct pen p = { .n = s->text, .t = t, .lit = lit, .veil = lit && look == STRIP_PLASMA, .age = -1, .fg = -1 };
 	row(&p, m, cols, 0);
 	free(lit);
+}
+
+void strip_draw(struct strip *s, const struct strip_model *m, const struct theme *t)
+{
+	draw(s, m, t);
+	if (m->quiet) ncplane_erase(s->text); /* the look alone, under the queue's glass */
 }

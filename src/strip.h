@@ -153,6 +153,7 @@ struct strip_model {
 	int levels;            /* lv holds what the daemon last said: show the meter */
 	struct tui_levels lv;
 	struct react rx;       /* envelopes of the levels, for the looks to move with */
+	int quiet;             /* the look alone, no words: the queue is over it */
 	char next[STRIP_NEXT][STRIP_NEXT_LEN]; /* what is next in the queue (strip_next), for the stage */
 	int nnext;
 };

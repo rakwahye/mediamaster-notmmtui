@@ -2,10 +2,14 @@
 /** @file overlay.h
  * @brief The queue, over the strip.
  *
- * Tab opens it: a plane over the strip's rows. Rows with words are on the
- * theme's background; the rows under the list Notcurses blends over the
- * look, so it goes on underneath, dimmed. (Words on a blend would have a
- * bright pixel of the look come up behind a letter at half its light.) One row
+ * Tab opens it: a pane of glass over the strip's rows, as notcurses-demo
+ * draws its HUD. Its cells are empty, fg and bg the theme's background
+ * (the veil the stage's words are on) blended over the look, so the look goes on under it with its own glyphs,
+ * dimly. A cell with a word in it is solid, in the colour the glass is
+ * over black, so a bright pixel cannot come up behind a letter, and where
+ * the look is dark the words and the glass are one pane. The selected row
+ * is violet glass the same way. Under it the strip draws its look alone,
+ * without its words, so only the queue's are on the glass. One row
  * shows the item selected; from four rows a header says how many and the
  * keys, and the items fill the rest:
  *
@@ -14,7 +18,7 @@
  *     ▶ 3   Time — Pink Floyd                                       6:53
  *       4   sine:220:30
  *
- * The item playing has ▶; the one selected a bar of violet behind it.
+ * The item playing has ▶; the one selected is on violet.
  *
  *     j k ↑ ↓  select          g G    first, last
  *     ⏎        play it         d      remove it

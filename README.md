@@ -42,8 +42,9 @@ it in a short terminal or pane; it fills what it is given.
 Tab opens the queue over the strip, on the item playing: j/k (↑/↓) select,
 g/G the first and last, ⏎ plays it, d removes it, a opens a line to type
 a URI into (⏎ adds it, Esc leaves it); Tab, Esc or q close it. The keys
-above still work under it. Rows with words are solid; under the list the
-look goes on, dimmed through a blend. From four rows a header says how
+above still work under it. It is a pane of smoked glass, as
+notcurses-demo draws its HUD: the look goes on under it, glyphs and all,
+dimly, without its words; the queue's words sit on it solid. From four rows a header says how
 many and the keys; on one row it is the item selected alone. It follows the
 daemon through `watch`, and reconnects when the daemon restarts.
 

@@ -156,10 +156,48 @@ static int cols_of(const char *s)
 	return n;
 }
 
-static void fg(struct ncplane *n, const struct theme *t, int role)
+/* The glass: a tint Notcurses blends over the look, fg and bg, so the
+ * look's own glyphs show through it, dimly (as notcurses-demo's HUD). A
+ * cell with a word in it is solid instead, in the colour the glass is over
+ * black, half the tint, so a bright pixel of the look cannot come up
+ * behind a letter, and over the dark of a look the two are one pane. */
+static uint32_t rgb(const struct theme *t, int role, uint32_t fallback)
 {
-	if (t->c[role] == THEME_DEFAULT) ncplane_set_fg_default(n);
-	else ncplane_set_fg_rgb(n, (uint32_t)t->c[role]);
+	return t->c[role] == THEME_DEFAULT ? fallback : (uint32_t)t->c[role];
+}
+
+static uint32_t mix(uint32_t a, uint32_t b, double k)
+{
+	uint32_t o = 0;
+	for (int sh = 0; sh <= 16; sh += 8) {
+		double x = (a >> sh & 0xff) * (1 - k) + (b >> sh & 0xff) * k;
+		o |= (uint32_t)(x + 0.5) << sh;
+	}
+	return o;
+}
+
+static uint32_t half(uint32_t c) { return c >> 1 & 0x7f7f7f; }
+
+/* the glass's tint, the theme's background (the veil the stage's words
+ * are on), and the selection's */
+static uint32_t tint(const struct theme *t) { return rgb(t, TH_BG, 0x000000); }
+static uint32_t bar_tint(const struct theme *t) { return mix(tint(t), rgb(t, TH_VIOLET, 0x8060c0), 0.75); }
+
+/* Words from here on: in `fg`, solid on what `under` (a tint) is over black. */
+static void ink(struct ncplane *n, uint32_t fg, uint32_t under)
+{
+	ncplane_set_fg_rgb(n, fg);
+	ncplane_set_fg_alpha(n, NCALPHA_OPAQUE);
+	ncplane_set_bg_rgb(n, half(under));
+	ncplane_set_bg_alpha(n, NCALPHA_OPAQUE);
+}
+
+/* A role's colour on the glass: dim is lifted, as it would be lost on
+ * the glass over black. */
+static uint32_t role(const struct theme *t, int r)
+{
+	if (r == TH_DIM) return mix(rgb(t, TH_FG, 0xc0c0c0), half(tint(t)), 0.45);
+	return rgb(t, r, 0xc0c0c0);
 }
 
 /* `s` from column x, cut with "…" to end before `end`; control characters
@@ -189,18 +227,13 @@ static int put(struct ncplane *n, int y, int x, const char *s, int end)
 	return x;
 }
 
-/* A row's ground: the bar (bar 1); the theme's bg, solid under words
- * (bar 0) or blended over the look (bar -1). */
-static void ground(struct ncplane *n, const struct theme *t, int y, unsigned cols, int bar)
+/* The selection's row: violet glass across it (its gaps hide the look's
+ * glyphs, as a bar should). */
+static void bar(struct ncplane *n, const struct theme *t, int y, unsigned cols)
 {
-	uint32_t bg = t->c[TH_BG] == THEME_DEFAULT ? 0 : (uint32_t)t->c[TH_BG];
-	uint32_t violet = t->c[TH_VIOLET] == THEME_DEFAULT ? 0x5f5f87 : (uint32_t)t->c[TH_VIOLET];
-	uint32_t c = bar > 0 ? (((bg >> 16 & 0xff) * 11 + (violet >> 16 & 0xff) * 9) / 20) << 16 |
-	                   (((bg >> 8 & 0xff) * 11 + (violet >> 8 & 0xff) * 9) / 20) << 8 |
-	                   ((bg & 0xff) * 11 + (violet & 0xff) * 9) / 20
-	                 : bg;
-	ncplane_set_bg_rgb(n, c);
-	ncplane_set_bg_alpha(n, bar >= 0 ? NCALPHA_OPAQUE : NCALPHA_BLEND);
+	ncplane_set_bg_rgb(n, bar_tint(t));
+	ncplane_set_bg_alpha(n, NCALPHA_BLEND);
+	ncplane_set_fg_alpha(n, NCALPHA_BLEND);
 	for (unsigned x = 0; x < cols; x++) ncplane_putstr_yx(n, y, (int)x, " ");
 }
 
@@ -208,28 +241,31 @@ static void item(struct overlay *o, const struct theme *t, size_t i, int y, unsi
 {
 	struct ncplane *n = o->n;
 	const struct tui_item *it = &o->q.v[i];
-	ground(n, t, y, cols, i == o->sel);
+	int sel = i == o->sel;
+	uint32_t under = sel ? bar_tint(t) : tint(t);
+	if (sel) bar(n, t, y, cols);
 	int end = (int)cols - 1;
-	if (it->cursor) {
-		fg(n, t, TH_MAGENTA);
-		ncplane_putstr_yx(n, y, 1, "▶");
-	}
+	/* one label from the marker to the end of the name: its gaps solid too,
+	 * so the look's glyphs do not come up between its parts */
+	ink(n, role(t, TH_MAGENTA), under);
+	ncplane_putstr_yx(n, y, 1, it->cursor ? "▶ " : "  ");
 	char num[24], name[256];
-	snprintf(num, sizeof(num), "%*ld", numw, it->pos);
-	fg(n, t, i == o->sel ? TH_FG : TH_DIM); /* dim on the bar would not read */
-	int x = put(n, y, 3, num, end) + 2;
+	snprintf(num, sizeof(num), "%*ld  ", numw, it->pos);
+	ink(n, sel ? role(t, TH_FG) : role(t, TH_DIM), under);
+	int x = put(n, y, 3, num, end);
 	int dw = it->duration[0] ? cols_of(it->duration) + 2 : 0;
-	if (dw) {
-		fg(n, t, i == o->sel ? TH_FG : TH_DIM);
-		put(n, y, end - dw + 2, it->duration, end);
+	if (dw) { /* with a space before it, solid */
+		char d[40];
+		snprintf(d, sizeof(d), " %s", it->duration);
+		put(n, y, end - dw + 1, d, end);
 	}
 	strip_item_name(it, name, sizeof(name));
-	fg(n, t, TH_FG);
+	ink(n, role(t, TH_FG), under);
 	x = put(n, y, x, name, end - dw);
 	if (it->title[0] && it->artist[0] && x + 4 < end - dw) {
-		fg(n, t, i == o->sel ? TH_FG : TH_DIM);
+		ink(n, sel ? role(t, TH_FG) : role(t, TH_DIM), under);
 		x = put(n, y, x, " — ", end - dw);
-		fg(n, t, TH_VIOLET);
+		ink(n, sel ? role(t, TH_FG) : role(t, TH_VIOLET), under);
 		put(n, y, x, it->artist, end - dw);
 	}
 }
@@ -240,48 +276,54 @@ void overlay_draw(struct overlay *o, const struct theme *t, const char *msg, uns
 	unsigned r, c;
 	ncplane_dim_yx(n, &r, &c);
 	if (r != rows || c != cols) ncplane_resize_simple(n, rows, cols);
+	uint64_t base = 0;
+	if (o->open) { /* the glass: an empty glyph, so the look's show; fg and bg blended with the tint */
+		ncchannels_set_fg_rgb(&base, tint(t));
+		ncchannels_set_fg_alpha(&base, NCALPHA_BLEND);
+		ncchannels_set_bg_rgb(&base, tint(t));
+		ncchannels_set_bg_alpha(&base, NCALPHA_BLEND);
+	} else {
+		ncchannels_set_fg_alpha(&base, NCALPHA_TRANSPARENT);
+		ncchannels_set_bg_alpha(&base, NCALPHA_TRANSPARENT);
+	}
+	ncplane_set_base(n, "", 0, base);
 	ncplane_erase(n);
 	if (!o->open || !rows || !cols) return;
 	ncplane_set_styles(n, NCSTYLE_NONE);
+	uint32_t glass = tint(t);
 	int head = rows >= 4, line = o->adding && rows >= 2;
 	int list = (int)rows - head - line, y = 0, end = (int)cols - 1;
 	char count[48];
 	snprintf(count, sizeof(count), "%zu/%zu%s", o->q.n ? o->sel + 1 : 0, o->q.n, o->q.more ? "+" : "");
 
 	if (head) {
-		ground(n, t, 0, cols, 0);
-		fg(n, t, TH_MAGENTA);
-		int x = put(n, 0, 1, "queue", end) + 1;
-		fg(n, t, TH_DIM);
+		ink(n, role(t, TH_MAGENTA), glass);
+		int x = put(n, 0, 1, "queue ", end);
+		ink(n, role(t, TH_DIM), glass);
 		x = put(n, 0, x, count, end) + 3;
 		const char *keys = msg && msg[0] ? msg : "j k move · ⏎ play · a add · d remove · tab close";
 		int kw = cols_of(keys);
-		fg(n, t, msg && msg[0] ? TH_ORANGE : TH_DIM);
+		ink(n, msg && msg[0] ? role(t, TH_ORANGE) : role(t, TH_DIM), glass);
 		put(n, 0, end - kw > x ? end - kw : x, keys, end);
 		y = 1;
 	}
 	if (list > 0) {
 		if (!o->q.n) {
-			ground(n, t, y, cols, 0);
-			fg(n, t, TH_DIM);
+			ink(n, role(t, TH_DIM), glass);
 			put(n, y, 3, head || line ? "the queue is empty" : "the queue is empty · a add · tab close", end);
-			for (int i = 1; i < list; i++) ground(n, t, y + i, cols, -1);
 		} else {
 			o->top = overlay_top(o->sel, o->top, o->q.n, list);
 			int numw = snprintf(NULL, 0, "%ld", o->q.v[o->q.n - 1].pos);
-			for (int i = 0; i < list; i++) {
-				size_t k = o->top + (size_t)i;
-				if (k < o->q.n) item(o, t, k, y + i, cols, numw);
-				else ground(n, t, y + i, cols, -1);
-			}
+			for (int i = 0; i < list && o->top + (size_t)i < o->q.n; i++)
+				item(o, t, o->top + (size_t)i, y + i, cols, numw);
 		}
 	}
 	if (o->adding) { /* the add: line, at the bottom, or the only row */
 		int ay = (int)rows - 1;
-		ground(n, t, ay, cols, 0);
-		fg(n, t, TH_CYAN);
+		if (rows == 1) ncplane_erase(n);
+		ink(n, role(t, TH_CYAN), glass);
 		int x = put(n, ay, 1, "add: ", end);
-		fg(n, t, TH_FG);
+		ink(n, role(t, TH_FG), glass);
 		int w = cols_of(o->input);
 		/* the end of what is typed stays in view */
 		const char *s = o->input;
@@ -291,7 +333,7 @@ void overlay_draw(struct overlay *o, const struct theme *t, const char *msg, uns
 			w = cols_of(s);
 		}
 		x = put(n, ay, x, s, end);
-		fg(n, t, TH_CYAN);
+		ink(n, role(t, TH_CYAN), glass);
 		ncplane_putstr_yx(n, ay, x, "▏");
 	}
 }
