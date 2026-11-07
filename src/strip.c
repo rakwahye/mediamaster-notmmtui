@@ -25,6 +25,9 @@
 #define AFTERGLOW    0.45 /* how bright a trace is once it is no longer the newest */
 #define TRACE_TALL   0.92 /* of the scope's half height, at full level */
 #define SCOPE_COLS   48   /* narrower than this, two rows of words and no scope */
+#define PEAK_HOLD    0.4  /* s a road peak holds before it falls */
+#define PEAK_FALL    24.0 /* steps a second it falls */
+#define REFLECT      0.30 /* how bright the reflection is, of its bar */
 
 struct strip {
 	struct ncplane *base, *text;
@@ -32,6 +35,11 @@ struct strip {
 	float *glow;
 	int gw, gh;
 	double at;
+	/* the road's bars and peaks, in steps, and the peaks' time left to
+	 * hold, as of `road_at`; a pause keeps the bars as they were */
+	float *bars, *peak, *hold;
+	int pn;
+	double road_at;
 };
 
 void strip_clock(char *buf, size_t cap, double s)
@@ -42,7 +50,7 @@ void strip_clock(char *buf, size_t cap, double s)
 }
 
 static const char *const LOOK[STRIP_LOOKS] = {
-	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_SCOPE] = "scope", [STRIP_PLAIN] = "plain",
+	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_SCOPE] = "scope", [STRIP_ROAD] = "road", [STRIP_PLAIN] = "plain",
 };
 
 const char *strip_look_name(int look) { return look >= 0 && look < STRIP_LOOKS ? LOOK[look] : "?"; }
@@ -54,11 +62,11 @@ int strip_look_find(const char *name)
 	return -1;
 }
 
-int strip_look_moves(int look) { return look == STRIP_PLASMA || look == STRIP_SCOPE; }
+int strip_look_moves(int look) { return look == STRIP_PLASMA || look == STRIP_SCOPE || look == STRIP_ROAD; }
 
-int strip_look_rows(int look) { return look == STRIP_SCOPE ? 2 : 1; }
+int strip_look_rows(int look) { return look == STRIP_SCOPE ? 2 : look == STRIP_ROAD ? 3 : 1; }
 
-int strip_look_for(unsigned rows) { return rows >= 2 ? STRIP_SCOPE : STRIP_POWERLINE; }
+int strip_look_for(unsigned rows) { return rows >= 3 ? STRIP_ROAD : rows == 2 ? STRIP_SCOPE : STRIP_POWERLINE; }
 
 int strip_look_next(int look, unsigned rows)
 {
@@ -160,6 +168,31 @@ double strip_scope_wave(const float *band, double u, double t)
 	/* over the bands' RMS weight: one band alone is a whole sine, many
 	 * together swing wider and are clipped softly rather than cancelling */
 	return w > 1e-9 ? tanh(2.0 * s / sqrt(w)) : 0;
+}
+
+double strip_road_bar(const float *band, double u)
+{
+	double at = u * TUI_BANDS - 0.5;
+	if (at <= 0) return band[0];
+	if (at >= TUI_BANDS - 1) return band[TUI_BANDS - 1];
+	int i = (int)at;
+	double f = at - i;
+	return band[i] * (1 - f) + band[i + 1] * f;
+}
+
+void strip_road_peaks(float *peak, float *hold, const float *bar, int n, double dt)
+{
+	for (int i = 0; i < n; i++) {
+		if (bar[i] >= peak[i]) {
+			peak[i] = bar[i];
+			hold[i] = PEAK_HOLD;
+			continue;
+		}
+		double fall = dt - hold[i];
+		hold[i] = fall > 0 ? 0 : (float)(hold[i] - dt);
+		if (fall > 0) peak[i] = (float)(peak[i] - PEAK_FALL * fall);
+		if (peak[i] < bar[i]) peak[i] = bar[i];
+	}
 }
 
 int strip_bar(unsigned cols, double pos, double duration)
@@ -589,6 +622,76 @@ static void scope_ground(struct strip *s, const struct strip_model *m, const str
 	ncvisual_destroy(v);
 }
 
+/* The road: bars of the bands on every row but the last, peaks over them,
+ * and on the last the reflection, the water and its ripples. */
+static void road_ground(struct strip *s, const struct strip_model *m, const struct theme *t,
+                        unsigned rows, unsigned cols)
+{
+	struct ncplane *n = s->base;
+	plain_ground(n, t, rows, cols);
+	int going = m->daemon && !m->msg[0] && !m->refused[0] &&
+	            (m->st.state == TUI_PLAYING || m->st.state == TUI_PAUSED);
+	int up = (int)rows - 1, steps = up * 8, water = (int)rows - 1;
+	if ((int)cols != s->pn) {
+		free(s->bars);
+		free(s->peak);
+		free(s->hold);
+		s->bars = calloc(cols, sizeof(float));
+		s->peak = calloc(cols, sizeof(float));
+		s->hold = calloc(cols, sizeof(float));
+		s->pn = s->bars && s->peak && s->hold ? (int)cols : 0;
+		s->road_at = m->anim;
+		if (!s->pn) return;
+	}
+	float *bar = s->bars;
+	if (m->st.state != TUI_PAUSED)
+		for (unsigned x = 0; x < cols; x++)
+			bar[x] = going && m->levels ? (float)(strip_road_bar(m->rx.band, (x + 0.5) / cols) * steps) : 0;
+	double since = m->anim - s->road_at;
+	s->road_at = m->anim;
+	strip_road_peaks(s->peak, s->hold, bar, (int)cols, since < 0 || since > 2 ? 2 : since);
+
+	static const char *const UP[9] = { " ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" };
+	uint32_t bg = (uint32_t)t->c[TH_BG], fg = (uint32_t)t->c[TH_FG], cyan = (uint32_t)t->c[TH_CYAN];
+	double head = going ? m->bar / 8.0 : -1;
+	double k = m->st.state == TUI_PAUSED ? breathe(BREATH_LOW, m->breath) : 1.0;
+	for (unsigned x = 0; x < cols; x++) {
+		uint32_t sky = strip_sky(t, (x + 0.5) / cols);
+		int played = x + 0.5 < head;
+		uint32_t c = rgb_mix(bg, played ? sky : rgb_mix(sky, (uint32_t)t->c[TH_DIM], 0.55), (played ? 1.0 : 0.6) * k);
+		int b = (int)lround(bar[x]);
+		for (int r = 0; r < up; r++) { /* r = 0 the lowest */
+			int e = b - r * 8;
+			e = e < 0 ? 0 : e > 8 ? 8 : e;
+			if (!e) continue;
+			/* the top of a bar a little whiter, as if lit from above */
+			ncplane_set_fg_rgb(n, e < 8 || b <= (r + 1) * 8 ? rgb_mix(c, fg, 0.2) : c);
+			ncplane_set_bg_rgb(n, bg);
+			ncplane_putstr_yx(n, up - 1 - r, (int)x, UP[e]);
+		}
+		/* the peak: a thin cap where the bar is not */
+		int pk = (int)lround(s->peak[x]), pr = (pk - 1) / 8;
+		if (going && pk > b && pk > 0 && pr < up && pr != (b ? (b - 1) / 8 : -1)) {
+			ncplane_set_fg_rgb(n, rgb_mix(c, fg, 0.6));
+			ncplane_set_bg_rgb(n, bg);
+			ncplane_putstr_yx(n, up - 1 - pr, (int)x, (pk - 1) % 8 >= 4 ? "▔" : "▁");
+		}
+		/* the water: lit a little where it has played; the reflection
+		 * of the lowest row hangs from its top, shorter, darker */
+		uint32_t wet = rgb_mix(bg, sky, played ? 0.10 : 0.03);
+		int e = b > 8 ? 8 : b;
+		e = e * 3 / 4;
+		ncplane_set_fg_rgb(n, wet);
+		ncplane_set_bg_rgb(n, e ? rgb_mix(bg, c, REFLECT) : wet);
+		ncplane_putstr_yx(n, water, (int)x, e ? UP[8 - e] : " ");
+		/* ripples drifting right */
+		if (going && ((int)x - (int)(m->anim * 3.0)) % 13 == 0 && !e) {
+			ncplane_set_fg_rgb(n, rgb_mix(wet, cyan, 0.30));
+			ncplane_putstr_yx(n, water, (int)x, "─");
+		}
+	}
+}
+
 /* ------------------------------------------------------------------ strip */
 
 struct strip *strip_new(struct ncplane *base)
@@ -616,6 +719,9 @@ void strip_free(struct strip *s)
 	if (!s) return;
 	ncplane_destroy(s->text);
 	free(s->glow);
+	free(s->bars);
+	free(s->peak);
+	free(s->hold);
 	free(s);
 }
 
@@ -639,6 +745,15 @@ void strip_draw(struct strip *s, const struct strip_model *m, const struct theme
 		ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
 		struct pen p = { .n = s->text, .t = t, .age = -1, .fg = -1 };
 		row(&p, m, cols, 1);
+		return;
+	}
+	if (look == STRIP_ROAD) {
+		road_ground(s, m, t, rows, cols);
+		ncplane_erase(s->text);
+		ncplane_set_styles(s->text, NCSTYLE_NONE);
+		ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
+		struct pen p = { .n = s->text, .t = t, .age = -1, .fg = -1, .y = (int)rows - 1 };
+		row(&p, m, cols, 0);
 		return;
 	}
 	if (look != STRIP_PLAIN) lit = calloc(cols, sizeof(*lit));

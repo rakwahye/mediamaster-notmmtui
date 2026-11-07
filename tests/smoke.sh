@@ -246,6 +246,7 @@ if command -v ffmpeg >/dev/null; then
 	$TTY 1 60 "$TUI" 'wait:/ 4:00' 'moving:10' key:q || fail "powerline: pulses move the bar"
 	$TTY 1 60 "$TUI --look plasma" 'wait:/ 4:00' 'legible:2' key:q || fail "plasma on pulses: still legible"
 	$TTY 2 100 "$TUI" 'wait:4:00' 'legible:2' key:q || fail "scope on pulses: still legible"
+	$TTY 3 100 "$TUI" 'wait:/ 4:00' 'moving:10@1' 'legible:2' key:q || fail "road on pulses: the bars move, the words legible"
 fi
 
 # two rows: the scope, unasked; the words on two rows, the meter two cells
@@ -260,6 +261,13 @@ $TTY 2 100 "$TUI" 'wait:4:00' 'key:l' 'wait:/ 4:00' 'size:2,90' 'sleep:0.3' 'wai
 	fail "scope: l to the next look, which stays when the size changes"
 $TTY 1 60 "$TUI --look scope" 'wait:/ 4:00' key:q || fail "scope on one row: powerline"
 $TTY 2 40 "$TUI" 'wait:sine:440:240' 'wait:4:00' key:q || fail "scope, narrow: the words alone"
+
+# three rows: the road, unasked; the words on the last row, ripples drifting
+# through the water; two rows is scope again, three road; a pause
+$TTY 3 100 "$TUI" 'wait:/ 4:00' 'fgat:0@2=ff2bd6' 'moving:60@2' 'size:2,100' 'gone:/ 4:00' \
+	'size:3,100' 'wait:/ 4:00' 'key: ' 'wait:‖' 'key: ' 'wait:▶' key:q ||
+	fail "road: three rows, two, three again; a pause"
+$TTY 2 100 "$TUI --look road" 'wait:/ 4:00' key:q || fail "road on two rows: powerline"
 "$MMCTL" play sine:440:30 >/dev/null
 
 # the position counts on between reads; the daemon goes, comes back, is followed

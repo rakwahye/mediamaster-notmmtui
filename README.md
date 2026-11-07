@@ -12,11 +12,16 @@ paused. `--look plain` draws it on the theme's background. A two-cell meter
 before the time shows the left and right peaks from the daemon's
 `watch levels`, and the looks move with them.
 
-Two rows or more: `--look scope`, the default there. The words take the
+Two rows: `--look scope`, the default there. The words take the
 left on two rows, the meter stands two cells tall, and an oscilloscope
 drawn from the daemon's 32 bands runs on the right in octants, its old
-traces fading like phosphor. `l` switches between the looks the strip is
-tall enough for, as it runs. Keys: space toggles,
+traces fading like phosphor.
+
+Three rows or more: `--look road`, the default there. The bands stand as
+bars across the whole width, bright up to the playhead and dim after it,
+with peaks that hold and fall; the last row is a wet road with their
+reflection and the words of one row on it. `l` switches between the looks
+the strip is tall enough for, as it runs. Keys: space toggles,
 n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits. Run
 it in a short terminal or pane; it fills what it is given. It follows the
 daemon through `watch`, and reconnects when the daemon restarts.

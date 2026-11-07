@@ -3,9 +3,10 @@
  * @brief notmmtui: a strip of a player for the mediamaster daemon.
  *
  *   notmmtui [--socket <path>] [--theme powerlines|plain|<file>]
- *            [--look powerline|plasma|scope|plain]
+ *            [--look powerline|plasma|scope|road|plain]
  *                        the strip, in the whole terminal (make it short);
- *                        with no --look, scope from two rows, else powerline
+ *                        with no --look, road from three rows, scope on
+ *                        two, powerline on one
  *   notmmtui [--socket <path>] --version
  *                        this client's version and the daemon's
  *
@@ -64,7 +65,7 @@
 static void usage(FILE *f)
 {
 	fputs("usage: notmmtui [--socket <path>] [--theme powerlines|plain|<file>]\n"
-	      "                [--look powerline|plasma|scope|plain]\n"
+	      "                [--look powerline|plasma|scope|road|plain]\n"
 	      "       notmmtui [--socket <path>] --version\n"
 	      "socket: --socket, else $MM_SOCK, else the daemon's default\n", f);
 }
@@ -438,7 +439,7 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "--look") && i + 1 < argc) {
 			look = strip_look_find(argv[++i]);
 			if (look < 0) {
-				fprintf(stderr, "notmmtui: no look %s (powerline, plasma, scope, plain)\n", argv[i]);
+				fprintf(stderr, "notmmtui: no look %s (powerline, plasma, scope, road, plain)\n", argv[i]);
 				return 2;
 			}
 		} else if ((!strcmp(a, "--socket") || !strcmp(a, "--theme")) && i + 1 < argc) {

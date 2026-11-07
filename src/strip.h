@@ -37,6 +37,19 @@
  *
  *              Paused, the trace stays where it was and breathes.
  *
+ *   road       three rows or more: a spectrum over a wet road. The bands
+ *              stand as bars across the whole width, 8 steps a row on
+ *              every row but the last, in the sky's colours, bright up to
+ *              the playhead and dim after it, peaks held a moment over
+ *              them and falling. The last row is the road: the bars'
+ *              reflection, shorter and darker, the water a little lit
+ *              where it has played, ripples drifting through it, and the
+ *              words of the one-row looks on it:
+ *
+ *     ▁▃▅▇▆▄▂▁ ▂▃▄▃▂▁   ▁▂▁
+ *     ████████▇█████▆▄▂▃▅██▆▃
+ *     ▶ Title — Artist     ▅▆ 1:23 / 6:53
+ *
  * A theme with no colours of its own (plain) is drawn in the plain look,
  * and a look taller than the strip (strip_look_rows) in powerline. With
  * no look asked for, the height picks one (strip_look_for).
@@ -69,11 +82,11 @@
 
 struct ncplane;
 
-enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_SCOPE, STRIP_PLAIN, STRIP_LOOKS };
+enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_SCOPE, STRIP_ROAD, STRIP_PLAIN, STRIP_LOOKS };
 
 #define STRIP_FRAME_MS 66 /* about 15 frames a second, for a look that moves */
 
-/** "powerline", "plasma", "scope", "plain". */
+/** "powerline", "plasma", "scope", "road", "plain". */
 const char *strip_look_name(int look);
 
 /** The look named `name`, or -1. */
@@ -82,7 +95,7 @@ int strip_look_find(const char *name);
 /** Whether `look` moves while playing (and needs frames, not ticks). */
 int strip_look_moves(int look);
 
-/** The rows `look` needs: 2 for scope, 1 for the rest. */
+/** The rows `look` needs: 2 for scope, 3 for road, 1 for the rest. */
 int strip_look_rows(int look);
 
 /** The look for a strip `rows` high when none was asked for. */
@@ -159,6 +172,15 @@ int strip_meter_steps(uint8_t peak, int steps);
  * sum taken over the bands' RMS weight and softly clipped. 0 when all
  * rest. */
 double strip_scope_wave(const float *band, double u, double t);
+
+/** The road's bar at u (0 left .. 1 right), 0..1: the bands spread
+ * evenly over the width, each column between its two nearest. */
+double strip_road_bar(const float *band, double u);
+
+/** The road's peaks over `n` bars (in steps), `dt` s on: a peak under its
+ * bar jumps to it and holds 0.4 s, then falls at 24 steps a second, never
+ * below its bar. `hold` is each one's time left to hold. */
+void strip_road_peaks(float *peak, float *hold, const float *bar, int n, double dt);
 
 /** "m:ss", or "h:mm:ss" from an hour. */
 void strip_clock(char *buf, size_t cap, double s);

@@ -102,10 +102,14 @@ static int meter(void)
 static int looks(void)
 {
 	CHECK(strip_look_for(1) == STRIP_POWERLINE, "one row: powerline");
-	CHECK(strip_look_for(2) == STRIP_SCOPE && strip_look_for(5) == STRIP_SCOPE, "two rows or more: scope");
+	CHECK(strip_look_for(2) == STRIP_SCOPE, "two rows: scope");
+	CHECK(strip_look_for(3) == STRIP_ROAD && strip_look_for(5) == STRIP_ROAD, "three rows or more: road");
 	CHECK(strip_look_next(STRIP_PLASMA, 1) == STRIP_PLAIN, "one row: scope is skipped");
 	CHECK(strip_look_next(STRIP_PLAIN, 1) == STRIP_POWERLINE, "and round again");
 	CHECK(strip_look_next(STRIP_PLASMA, 2) == STRIP_SCOPE, "two rows: scope is one of them");
+	CHECK(strip_look_next(STRIP_SCOPE, 2) == STRIP_PLAIN, "but not road");
+	CHECK(strip_look_next(STRIP_SCOPE, 3) == STRIP_ROAD, "three rows: road too");
+	CHECK(strip_look_find("road") == STRIP_ROAD && strip_look_moves(STRIP_ROAD), "road, and it moves");
 	CHECK(strip_look_find("scope") == STRIP_SCOPE && strip_look_moves(STRIP_SCOPE), "scope, and it moves");
 	return 0;
 }
@@ -131,6 +135,30 @@ static int scope(void)
 	return 0;
 }
 
+static int road(void)
+{
+	float band[TUI_BANDS] = { 0 };
+	band[0] = 1.0f;
+	band[TUI_BANDS - 1] = 0.5f;
+	CHECK(strip_road_bar(band, 0.0) == 1.0, "the left edge: the lowest band");
+	CHECK(strip_road_bar(band, 1.0) == 0.5, "the right edge: the highest");
+	double half = strip_road_bar(band, 1.0 / TUI_BANDS); /* between bands 0 and 1 */
+	CHECK(half > 0.45 && half < 0.55, "between two bands, between their bars");
+
+	float bar[2] = { 10, 0 }, peak[2] = { 0, 12 }, hold[2] = { 0, 0 };
+	strip_road_peaks(peak, hold, bar, 2, 0.05);
+	CHECK(peak[0] == 10 && hold[0] > 0.39f, "a bar over its peak lifts it, and it holds");
+	CHECK(peak[1] < 12 && peak[1] > 10, "a peak with no hold left falls");
+	bar[0] = 0;
+	strip_road_peaks(peak, hold, bar, 2, 0.3);
+	CHECK(peak[0] == 10, "held for a while");
+	strip_road_peaks(peak, hold, bar, 2, 0.2); /* 0.1 s past the hold */
+	CHECK(peak[0] < 10 && peak[0] > 6, "then falling, from where the hold ran out");
+	strip_road_peaks(peak, hold, bar, 2, 5.0);
+	CHECK(peak[0] == 0 && peak[1] == 0, "down to the bar and no further");
+	return 0;
+}
+
 int main(void)
 {
 	RUN(bar);
@@ -141,5 +169,6 @@ int main(void)
 	RUN(meter);
 	RUN(looks);
 	RUN(scope);
+	RUN(road);
 	CHECK_PASS("test-strip");
 }
