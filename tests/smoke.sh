@@ -302,6 +302,21 @@ i=0
 until [ -e "$T/added" ]; do i=$((i + 1)); [ $i -lt 200 ] || fail "stage: next did not move on"; sleep 0.05; done
 "$MMCTL" queue add sine:550:30 >/dev/null
 wait $TP || fail "stage: what is next, after n and an add"
+
+# the queue over the strip: tab opens it on the item playing; j moves, d
+# removes, enter plays, a adds what is typed; tab closes it. q closes it
+# rather than quitting; a second q quits
+"$MMCTL" queue clear >/dev/null
+"$MMCTL" play sine:440:240 >/dev/null
+"$MMCTL" queue add sine:220:30 sine:330:200 >/dev/null
+$TTY 12 100 "$TUI" 'wait:4:00' 'key:\t' 'wait:queue 1/3' 'wait:▶ 1  sine:440:240' 'legible:2' \
+	'key:j' 'wait:queue 2/3' 'key:d' 'wait:queue 2/2' 'gone:sine:220:30' 'key:\r' 'wait:▶ 2  sine:330:200' \
+	'key:a' 'wait:add:' 'key:sine:550:30' 'key:\r' 'wait:3  sine:550:30' 'gone:add:' \
+	'key:\t' 'gone:queue' 'wait:3:20' key:q || fail "queue: open, move, remove, play, add, close"
+$TTY 1 100 "$TUI" 'wait:/ 3:20' 'key:\t' 'wait:▶ 2  sine:330:200' 'gone:/ 3:20' 'legible:2' 'key:k' \
+	'wait:1  sine:440:240' 'key:q' 'wait:/ 3:20' key:q || fail "queue on one row: the item selected; q closes it"
+$TTY 4 100 "$TUI" 'wait:/ 3:20' 'key:\t' 'wait:queue 2/3' 'wait:j k move' 'key:\e' 'gone:queue' key:q ||
+	fail "queue on four rows: a header; esc closes it"
 "$MMCTL" play sine:440:30 >/dev/null
 
 # the position counts on between reads; the daemon goes, comes back, is followed

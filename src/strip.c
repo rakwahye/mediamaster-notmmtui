@@ -246,6 +246,23 @@ int strip_big_text(const char *s, char *out, size_t n, int max)
 	return i;
 }
 
+void strip_item_name(const struct tui_item *it, char *out, size_t n)
+{
+	if (it->title[0]) {
+		snprintf(out, n, "%s", it->title);
+		return;
+	}
+	/* untitled: a file by its name, without folder or extension */
+	const char *u = it->uri, *slash = strrchr(u, '/');
+	if (!slash || !slash[1]) {
+		snprintf(out, n, "%s", u);
+		return;
+	}
+	const char *name = slash + 1, *dot = strrchr(name, '.');
+	int len = dot && dot != name && strlen(dot) <= 6 ? (int)(dot - name) : (int)strlen(name);
+	snprintf(out, n, "%.*s", len, name);
+}
+
 int strip_next(const struct tui_list *q, char next[][STRIP_NEXT_LEN], int max)
 {
 	size_t from = 0;
@@ -253,22 +270,7 @@ int strip_next(const struct tui_list *q, char next[][STRIP_NEXT_LEN], int max)
 		if (q->v[i].cursor) from = i + 1;
 	int n = 0;
 	if (max > STRIP_NEXT) max = STRIP_NEXT;
-	for (size_t i = from; i < q->n && n < max; i++, n++) {
-		const char *u = q->v[i].uri;
-		if (q->v[i].title[0]) {
-			snprintf(next[n], STRIP_NEXT_LEN, "%s", q->v[i].title);
-			continue;
-		}
-		/* untitled: a file by its name, without folder or extension */
-		const char *slash = strrchr(u, '/');
-		if (!slash || !slash[1]) {
-			snprintf(next[n], STRIP_NEXT_LEN, "%s", u);
-			continue;
-		}
-		const char *name = slash + 1, *dot = strrchr(name, '.');
-		int len = dot && dot != name && strlen(dot) <= 6 ? (int)(dot - name) : (int)strlen(name);
-		snprintf(next[n], STRIP_NEXT_LEN, "%.*s", len, name);
-	}
+	for (size_t i = from; i < q->n && n < max; i++, n++) strip_item_name(&q->v[i], next[n], STRIP_NEXT_LEN);
 	return n;
 }
 

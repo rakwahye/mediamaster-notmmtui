@@ -126,7 +126,11 @@ $(T)/test-react: tests/react_test.c src/react.c src/react.h src/reply.h tests/ch
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -o $@
 
-TESTS := $(T)/test-reply $(T)/test-keys $(T)/test-theme $(T)/test-strip $(T)/test-react
+$(T)/test-overlay: tests/overlay_test.c src/overlay.c src/strip.c src/font.c src/reply.c src/theme.c src/ipc.c $(HDRS) tests/check.h Makefile
+	@mkdir -p $(@D)
+	$(CC) $(TEST_CFLAGS) $(filter %.c %.o,$^) $(TUI_LIBS) -o $@
+
+TESTS := $(T)/test-reply $(T)/test-keys $(T)/test-theme $(T)/test-strip $(T)/test-react $(T)/test-overlay
 
 unit: $(TESTS)
 	@$(T)/test-reply tests/fixtures
@@ -134,6 +138,7 @@ unit: $(TESTS)
 	@$(T)/test-theme
 	@$(T)/test-strip
 	@$(T)/test-react
+	@$(T)/test-overlay
 
 # Against the installed daemon, the one this is built for; skipped when
 # none is in PATH. Only this client is built with SAN. Notcurses gives

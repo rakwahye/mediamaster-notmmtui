@@ -37,7 +37,14 @@ stage is taller; artist and album under it, what is next in the queue
 at the right; the time, a bar and the meter along the bottom. `l` switches between the looks the strip is tall
 enough for, as it runs. Keys: space toggles,
 n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits. Run
-it in a short terminal or pane; it fills what it is given. It follows the
+it in a short terminal or pane; it fills what it is given.
+
+Tab opens the queue over the strip, on the item playing: j/k (↑/↓) select,
+g/G the first and last, ⏎ plays it, d removes it, a opens a line to type
+a URI into (⏎ adds it, Esc leaves it); Tab, Esc or q close it. The keys
+above still work under it. Rows with words are solid; under the list the
+look goes on, dimmed through a blend. From four rows a header says how
+many and the keys; on one row it is the item selected alone. It follows the
 daemon through `watch`, and reconnects when the daemon restarts.
 
 Daemon: it talks to mediamaster over its socket and nothing else. It is

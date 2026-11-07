@@ -20,7 +20,7 @@
  * Socket: --socket, else $MM_SOCK, else the daemon's default, as mmctl. 
  *
  * Keys: the transport keys (keys.h), l the next look (of those the
- * strip is tall enough for), q quits.
+ * strip is tall enough for), tab the queue over it (overlay.h), q quits.
  *
  * Frames: every STRIP_FRAME_MS while the strip is changing by itself (a
  * look that moves, a title decoding in, a pause breathing); otherwise a
@@ -40,6 +40,7 @@
 #include "ipc.h"
 #include <mediamaster/mm_client.h>
 #include "keys.h"
+#include "overlay.h"
 #include "reply.h"
 #include "strip.h"
 #include "theme.h"
@@ -119,6 +120,14 @@ static int poll_status(struct strip_model *m)
 	int changed = memcmp(&next, m, sizeof(next)) != 0;
 	*m = next;
 	return changed;
+}
+
+/* Read the queue into the overlay. */
+static void poll_overlay(struct overlay *o, int first)
+{
+	static char reply[65536];
+	char *argv[] = { "queue", "list", "-l", NULL };
+	overlay_set(o, tui_call(3, argv, reply, sizeof(reply)) == TUI_OK ? reply : NULL, first);
 }
 
 /* Ask what is next in the queue, for the stage. @returns 1 if it changed. */
@@ -306,6 +315,13 @@ static int run(const struct theme *theme, int look)
 		fputs("notmmtui: cannot make the strip's planes\n", stderr);
 		return 1;
 	}
+	struct overlay *ov = overlay_new(std);
+	if (!ov) {
+		strip_free(strip);
+		notcurses_stop(nc);
+		fputs("notmmtui: cannot make the queue's plane\n", stderr);
+		return 1;
+	}
 	struct strip_model m;
 	memset(&m, 0, sizeof(m));
 	m.look = look >= 0 ? look : STRIP_POWERLINE;
@@ -313,7 +329,7 @@ static int run(const struct theme *theme, int look)
 	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS,
 	                    .lw = TUI_WATCH_INIT, .lbackoff_ms = RETRY_MIN_MS, .rx = &m.rx };
 	struct timespec msg_until = { 0, 0 };
-	int dirty = 1, need_status = 1, need_queue = 1, quit = 0;
+	int dirty = 1, need_status = 1, need_queue = 1, need_overlay = 0, quit = 0;
 	struct timespec frame_at, changed_at, start;
 	clock_gettime(CLOCK_MONOTONIC, &frame_at);
 	start = changed_at = frame_at;
@@ -362,6 +378,12 @@ static int run(const struct theme *theme, int look)
 			if (m.decode > strip_decode_time(strlen(m.st.title) + strlen(m.st.artist) + strlen(m.st.uri)))
 				m.decode = STRIP_SETTLED;
 		}
+		/* the queue over the strip, read when it is open and has changed */
+		if (need_overlay && ov->open) {
+			poll_overlay(ov, need_overlay > 1);
+			dirty = 1;
+		}
+		need_overlay = 0;
 		/* what is next, asked only for the look that shows it */
 		if (need_queue && m.look == STRIP_STAGE && m.daemon && !m.refused[0]) {
 			dirty |= poll_queue(&m);
@@ -385,6 +407,7 @@ static int run(const struct theme *theme, int look)
 		}
 		if (dirty) {
 			strip_draw(strip, &m, theme);
+			overlay_draw(ov, theme, m.msg, rows, cols);
 			notcurses_render(nc);
 			dirty = 0;
 		}
@@ -398,11 +421,21 @@ static int run(const struct theme *theme, int look)
 		ncinput ni;
 		uint32_t k;
 		while (!quit && (k = notcurses_get_nblock(nc, &ni)) != 0) {
-			char *cargv[KEYS_ARGV_MAX], buf[32];
+			char *cargv[OVERLAY_ARGV > KEYS_ARGV_MAX ? OVERLAY_ARGV : KEYS_ARGV_MAX], buf[32];
 			int cargc;
+			enum overlay_did did;
 			if (k == (uint32_t)-1 || k == NCKEY_EOF) quit = 1;
 			else if (ni.evtype == NCTYPE_RELEASE) continue;
-			else if (k == NCKEY_RESIZE) {
+			else if (!m.refused[0] && k != NCKEY_RESIZE && (did = overlay_key(ov, k, &ni, cargv)) != OVERLAY_NOT_MINE) {
+				dirty = 1;
+				if (did == OVERLAY_OPENED) need_overlay = 2; /* read it, the item playing selected */
+				if (did == OVERLAY_COMMAND) {
+					for (cargc = 0; cargv[cargc]; cargc++) {}
+					command(cargc, cargv, &m, &msg_until);
+					need_status = need_queue = 1;
+					if (!need_overlay) need_overlay = 1;
+				}
+			} else if (k == NCKEY_RESIZE) {
 				notcurses_refresh(nc, NULL, NULL);
 				dirty = 1;
 			} else if (k == 'q' && ncinput_nomod_p(&ni)) {
@@ -440,12 +473,16 @@ static int run(const struct theme *theme, int look)
 		}
 		if (f.events) {
 			need_status = 1;
-			if (f.events & (TUI_EV_QUEUE | TUI_EV_TRACK)) need_queue = 1;
+			if (f.events & (TUI_EV_QUEUE | TUI_EV_TRACK)) {
+				need_queue = 1;
+				if (!need_overlay) need_overlay = 1;
+			}
 			f.events = 0;
 		}
 	}
 	tui_watch_close(&f.w);
 	tui_watch_close(&f.lw);
+	overlay_free(ov);
 	strip_free(strip);
 	notcurses_stop(nc);
 	return 0;

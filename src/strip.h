@@ -242,10 +242,13 @@ void strip_stage_sun(double p, double *x, double *alt);
  * font cannot draw one of them (the title is then drawn small). */
 int strip_big_text(const char *s, char *out, size_t n, int max);
 
+/** An item's name to show: its title or, untitled, its URI, a path by
+ * its file's name without the extension. */
+void strip_item_name(const struct tui_item *it, char *out, size_t n);
+
 /** What is next in queue `q`: the items after its cursor (from the top
- * when it has none), their titles or, untitled, their URIs (a path by its
- * file's name, without the extension), at most `max` (no more than
- * STRIP_NEXT) into `next`. @returns how many. */
+ * when it has none), by name (strip_item_name), at most `max` (no more
+ * than STRIP_NEXT) into `next`. @returns how many. */
 int strip_next(const struct tui_list *q, char next[][STRIP_NEXT_LEN], int max);
 
 /** "m:ss", or "h:mm:ss" from an hour. */

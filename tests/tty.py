@@ -9,7 +9,7 @@ Steps, in order:
     wait:<text>   until <text> is on the screen
     gone:<text>   until it no longer is
     soon:<text>   as wait, but in 2 s, not 10
-    key:<keys>    type them; \\e is Escape, \\r Enter, [A..[D arrows
+    key:<keys>    type them; \\e is Escape, \\r Enter, \\t Tab, \\b Backspace, [A..[D arrows
     size:<r>,<c>  resize the terminal (SIGWINCH)
     sleep:<s>     pause
     touch:<path>  create the file, to tell a script waiting on it where we are
@@ -260,7 +260,7 @@ for st in steps:
     elif kind == "gone":
         until(lambda: arg not in text(), st)
     elif kind == "key":
-        keys = arg.replace("\\e", "\x1b").replace("\\r", "\r")
+        keys = arg.replace("\\e", "\x1b").replace("\\r", "\r").replace("\\t", "\t").replace("\\b", "\x7f")
         keys = re.sub(r"\[([A-D])", lambda m: "\x1b[" + m.group(1), keys)
         os.write(fd, keys.encode())
     elif kind == "size":
