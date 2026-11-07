@@ -281,6 +281,101 @@ static int expand(void)
 	return 0;
 }
 
+static const char *FOUND = "list\tlib:album/osc/lp-one\tLP: One\tOsc\t-\t-\n"
+                           "track\t/home/u/music/Osc/ten.flac\tTen\tOsc\t-\t0:02\n"
+                           "track\t/home/u/music/Osc/two.flac\tTab Title\tOsc\tLP: One\t0:03\n";
+
+static int is2(const char *a0, const char *a1) { return argv[0] && !strcmp(argv[0], a0) && argv[1] && !strcmp(argv[1], a1) && !argv[2]; }
+
+static int searching(void)
+{
+	struct overlay o;
+	memset(&o, 0, sizeof(o));
+	CHECK(key(&o, '/', "/", 0) == OVERLAY_TAKEN && o.open && o.search && o.typing, "/ from closed: search, typing");
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_TAKEN && o.typing, "nothing typed: nothing asked");
+	typed(&o, "osc");
+	CHECK(key(&o, 'q', "q", 0) == OVERLAY_TAKEN && !strcmp(o.query, "oscq"), "q is typed");
+	key(&o, NCKEY_BACKSPACE, NULL, 0);
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_FETCH && is2("search", "osc") && !o.typing, "enter: search");
+	overlay_found(&o, FOUND);
+	CHECK(o.found.n == 3 && o.fsel == 0 && o.searched, "the results");
+
+	CHECK(key(&o, 'j', "j", 0) == OVERLAY_TAKEN && o.fsel == 1, "j selects");
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_COMMAND && is2("play", "/home/u/music/Osc/ten.flac"),
+	      "enter on a track: play it by its URI");
+	CHECK(key(&o, 'a', "a", 0) == OVERLAY_COMMAND && argv[0] && !strcmp(argv[0], "queue") && !strcmp(argv[1], "add") &&
+	      !strcmp(argv[2], "track\t/home/u/music/Osc/ten.flac\tTen\tOsc\t-\t0:02") && !argv[3],
+	      "a: queue it by its line");
+	overlay_note(&o, "added at 7\n");
+	CHECK(!strcmp(o.note, "added at 7"), "the daemon's word, kept");
+	key(&o, 'k', "k", 0);
+	CHECK(!o.note[0] && o.fsel == 0, "until the next key");
+
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_FETCH && is2("browse", "lib:album/osc/lp-one") && o.depth == 1 &&
+	      !strcmp(o.trail[0].name, "LP: One") && o.fsel == 0, "enter on a list: into it");
+	overlay_found(&o, "track\t/x/one.flac\tOne\tOsc\tLP: One\t0:04\n");
+	CHECK(key(&o, 'l', "l", 0) == OVERLAY_TAKEN, "l on a track: only lists go in");
+	o.fsel = 0;
+	key(&o, 'j', "j", 0);
+	CHECK(o.fsel == 0, "not past the last");
+	o.depth = 1;
+	o.trail[0].sel = 0;
+	CHECK(key(&o, NCKEY_BACKSPACE, NULL, 0) == OVERLAY_FETCH && is2("search", "osc") && o.depth == 0 && o.fsel == 0,
+	      "back out: the search asked again, the selection where it was");
+	overlay_found(&o, FOUND);
+	o.fsel = 2;
+	key(&o, 'k', "k", 0);
+	key(&o, 'k', "k", 0);
+	key(&o, NCKEY_ENTER, NULL, 0); /* into the list from the top */
+	CHECK(o.depth == 1 && o.trail[0].sel == 0, "the selection to come back to");
+	CHECK(key(&o, NCKEY_LEFT, NULL, 0) == OVERLAY_FETCH && o.depth == 0, "left is back too");
+	overlay_found(&o, FOUND);
+	CHECK(key(&o, NCKEY_BACKSPACE, NULL, 0) == OVERLAY_TAKEN && o.typing, "back at the top: the line");
+	CHECK(key(&o, NCKEY_ESC, NULL, 0) == OVERLAY_TAKEN && !o.typing && o.open, "esc on the line: the results");
+	CHECK(key(&o, '/', "/", 0) == OVERLAY_TAKEN && o.typing && !strcmp(o.query, "osc"), "/ : the line, as it was");
+	typed(&o, "x");
+	CHECK(!o.searched, "an edited query is not searched yet");
+	CHECK(key(&o, NCKEY_ESC, NULL, 0) == OVERLAY_CLOSED && !o.open, "esc with nothing searched: closed");
+
+	key(&o, '/', "/", 0);
+	CHECK(key(&o, NCKEY_TAB, NULL, 0) == OVERLAY_OPENED && !o.search && o.open, "tab on the line: the queue");
+	CHECK(key(&o, '/', "/", 0) == OVERLAY_TAKEN && o.search && o.typing, "/ from the queue: search");
+	key(&o, NCKEY_ENTER, NULL, 0);
+	overlay_found(&o, FOUND);
+	CHECK(key(&o, NCKEY_TAB, NULL, 0) == OVERLAY_OPENED && !o.search, "tab on the results: the queue");
+	CHECK(key(&o, NCKEY_TAB, NULL, 0) == OVERLAY_CLOSED, "and tab closes it");
+	CHECK(key(&o, NCKEY_TAB, NULL, 0) == OVERLAY_OPENED && !o.search, "tab from closed: the queue, not search");
+	key(&o, '/', "/", 0);
+	key(&o, NCKEY_ESC, NULL, 0); /* the results again */
+	CHECK(key(&o, ' ', " ", 0) == OVERLAY_NOT_MINE && key(&o, 'n', "n", 0) == OVERLAY_NOT_MINE,
+	      "on the results, space and n are the strip's");
+	CHECK(key(&o, 'q', "q", 0) == OVERLAY_CLOSED && !o.search, "q closes");
+
+	tui_list_free(&o.found);
+	memset(&o, 0, sizeof(o));
+	key(&o, '/', "/", 0);
+	typed(&o, "deep");
+	key(&o, NCKEY_ENTER, NULL, 0);
+	for (int d = 0; d < OVERLAY_DEPTH; d++) {
+		overlay_found(&o, FOUND);
+		o.fsel = 0;
+		CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_FETCH, "in and in");
+	}
+	overlay_found(&o, FOUND);
+	o.fsel = 0;
+	CHECK(o.depth == OVERLAY_DEPTH && key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_TAKEN, "but no deeper than the trail");
+	overlay_found(&o, NULL);
+	CHECK(o.found.n == 0 && key(&o, 'a', "a", 0) == OVERLAY_TAKEN && key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_TAKEN,
+	      "no results: nothing to play or queue");
+	tui_list_free(&o.found);
+
+	struct tui_item it = { .kind = TUI_LIST, .uri = "u", .title = "", .artist = "A", .album = "", .duration = "" };
+	char line[128];
+	overlay_line(&it, line, sizeof(line));
+	CHECK(!strcmp(line, "list\tu\t-\tA\t-\t-"), "a line: empty fields as -, as the daemon prints them");
+	return 0;
+}
+
 static int window(void)
 {
 	CHECK(overlay_top(2, 0, 10, 5) == 0, "in view: stays");
@@ -301,6 +396,7 @@ int main(void)
 	RUN(moves);
 	RUN(expand);
 	RUN(adding);
+	RUN(searching);
 	RUN(window);
 	CHECK_PASS("test-overlay");
 }

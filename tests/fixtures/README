@@ -3,3 +3,7 @@ SPDX-License-Identifier: LGPL-2.1-or-later
 Replies captured from a real daemon (mediamaster with queue -l, watch
 and levels, 1e7bd4b..487d319), temp paths rewritten to /home/u; checked
 again at 513d1f3 and 290f26c: the same formats. reply_test reads them.
+
+search-lists.txt and browse-list.txt are written by hand in the same
+format (as search.txt and browse-top.txt), for the fake daemon: a search
+that finds a list as well as tracks, and what is in the list.

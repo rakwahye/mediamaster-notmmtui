@@ -39,7 +39,26 @@
  *     tab esc q  close
  *
  * Any other key is the strip's (space, n, p, seek, volume). The queue is
- * `queue list -l`, read again when it or the track changes. */
+ * `queue list -l`, read again when it or the track changes.
+ *
+ * / opens search on the same glass, from the strip or the queue: a
+ * search: line at the bottom, ⏎ asks every source (`search <words>`) and
+ * the results come up above it, a list (an album, a playlist) with ▸:
+ *
+ *     search osc › LP: One  2/9          j k select · ⏎ play · a queue · ⌫ back
+ *       ▸ LP: One — Osc
+ *         Ten — Osc                                                    0:02
+ *
+ *     j k ↑ ↓ g G  select
+ *     ⏎        a track: play it; a list: into it (`browse`)
+ *     a        queue it (its line, so its title comes with it; a list
+ *              its tracks)
+ *     ⌫ h ←    back out of a list, or to the search: line
+ *     /        the search: line again       tab   the queue
+ *     esc q    close
+ *
+ * The search: line edits as the add: line does (ctrl+u, ctrl+w, keys with
+ * modifiers type), and esc on it goes back to the results, or closes. */
 
 #ifndef TUI_OVERLAY_H
 #define TUI_OVERLAY_H
@@ -54,6 +73,7 @@ struct ncinput;
 
 #define OVERLAY_INPUT 256
 #define OVERLAY_ARGV  5   /* a command's words and its NULL */
+#define OVERLAY_DEPTH 8   /* lists in lists search can go into */
 
 struct overlay {
 	struct ncplane *n;
@@ -68,12 +88,28 @@ struct overlay {
 	char **match;          /* what the add: line's path could go on to: names, a directory's with / */
 	size_t nmatch, more;   /* how many, and how many more there were */
 	int uri;               /* the add: line holds a URI, not a path */
+	char note[128];        /* what the daemon said to the last command */
+
+	/* search */
+	int search;            /* showing search, not the queue */
+	int typing;            /* the search: line has the keys */
+	int searched;          /* a search has been asked since the query changed */
+	char query[OVERLAY_INPUT];
+	struct tui_list found; /* the results, or a list's items */
+	size_t fsel, ftop;
+	int depth;             /* lists browsed into */
+	struct {
+		char uri[1024], name[128];
+		size_t sel;    /* where the selection was, to go back to */
+	} trail[OVERLAY_DEPTH];
+	char line[8192];       /* a result as its search line, for queue add */
 };
 
 enum overlay_did {
 	OVERLAY_NOT_MINE = 0,  /* not an overlay key: the strip's */
 	OVERLAY_TAKEN,         /* done: draw it again */
-	OVERLAY_COMMAND,       /* run argv, then read the queue again */
+	OVERLAY_COMMAND,       /* run argv, then read the queue again (overlay_note the reply) */
+	OVERLAY_FETCH,         /* run argv, and hand its reply to overlay_found */
 	OVERLAY_OPENED,        /* read the queue */
 	OVERLAY_CLOSED,
 };
@@ -83,10 +119,20 @@ enum overlay_did {
 struct overlay *overlay_new(struct ncplane *parent);
 void overlay_free(struct overlay *o);
 
-/** Key `id` (with `ni`) for the overlay: Tab opens it from closed, and
- * nothing else does. A command fills argv (NULL-terminated, words in
+/** Key `id` (with `ni`) for the overlay: Tab opens the queue from
+ * closed, / search, and nothing else does. A command fills argv (NULL-terminated, words in
  * `o` or constants: OVERLAY_ARGV slots). */
 enum overlay_did overlay_key(struct overlay *o, uint32_t id, const struct ncinput *ni, char **argv);
+
+/** Search's results (`search` or `browse`'s reply; NULL: none). */
+void overlay_found(struct overlay *o, const char *reply);
+
+/** What the daemon said to a command (shown where the keys are, until
+ * the next key). */
+void overlay_note(struct overlay *o, const char *s);
+
+/** A result as the line `search` printed it, for queue add. */
+void overlay_line(const struct tui_item *it, char *out, size_t n);
 
 /** The queue as `queue list -l` gave it: the selection stays where it was
  * (held to the list), and on first reading after opening goes to the item

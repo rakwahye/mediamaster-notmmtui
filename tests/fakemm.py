@@ -10,8 +10,10 @@ status-paused.txt and the watchers are told "state". With `nowatch`,
 watch is refused as a daemon too old for it would: "err unknown verb".
 `version` is answered with <version reply>, e.g. "ok mediamaster 0.1.0
 abi 3.0". `watch levels` gets "levels 80 40 <bands>" 20 times a second; with
-watch-drop, each levels watcher is hung up on after a second. Each command
-is logged with its words. Runs until killed."""
+watch-drop, each levels watcher is hung up on after a second. `search`
+answers search-lists.txt ("no results" for the words "nothing"),
+`browse` browse-list.txt, `queue add` "ok added at 7". Each command is
+logged with its words. Runs until killed."""
 import os, socket, sys, threading, time
 
 path, fixtures, mode, version = sys.argv[1:5]
@@ -85,7 +87,18 @@ def serve(c):
                 threading.Thread(target=later, daemon=True).start()
         return  # kept open
     with lock:
-        reply = status[0] if argv[0] == "status" else (version + "\n").encode() if argv[0] == "version" else b"ok\n"
+        if argv[0] == "status":
+            reply = status[0]
+        elif argv[0] == "version":
+            reply = (version + "\n").encode()
+        elif argv[0] == "search":
+            reply = b"no results\n" if argv[1:] == ["nothing"] else read("search-lists.txt")
+        elif argv[0] == "browse":
+            reply = read("browse-list.txt")
+        elif argv[:2] == ["queue", "add"]:
+            reply = b"ok added at 7\n"
+        else:
+            reply = b"ok\n"
     c.sendall(reply)
     c.close()
 

@@ -1,0 +1,2 @@
+track	/home/u/music/Osc/one.flac	One	Osc	LP: One	0:04
+track	/home/u/music/Osc/two.flac	Tab Title	Osc	LP: One	0:03

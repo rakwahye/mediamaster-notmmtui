@@ -97,6 +97,32 @@ kill $FAKE; wait $FAKE 2>/dev/null || true
 n=$(grep -cx status "$T/fake.sock.log")
 [ "$n" -ge 5 ] || fail "without watch, status read only $n times in ~1.5 s"
 
+# --- search: / opens it; ⏎ asks every source and the results come up, a
+# list with ▸; ⏎ on a list goes into it (browse) and ⌫ comes back; a queues
+# a result by its line, so its title comes with it; ⏎ on a track plays it
+# by its URI; a search for nothing says so; esc on the line goes back to
+# the results, and on them closes search
+fake nowatch
+MM_SOCK="$T/fake.sock" $TTY 12 100 "$TUI" 'wait:Tab Title' 'key:/' 'wait:search: ' 'wait:type what to look for' \
+	'key:osc' 'key:\r' 'wait:▸ LP: One — Osc' 'wait:search osc  1/3' 'key:\r' 'wait:search osc › LP: One  1/2' \
+	'wait:One — Osc · LP: One' 'key:j' 'key:a' 'wait:added at 7' 'key:\b' 'wait:search osc  1/3' \
+	'key:G' 'key:\r' 'sleep:0.5' 'key:/' 'key:\b\b\b' 'key:nothing' 'key:\r' 'wait:nothing found' \
+	'gone:search: ' 'key:/' 'wait:search: nothing' 'key:\e' 'gone:search: ' 'wait:nothing found' \
+	'key:\e' 'gone:search' key:q ||
+	{ kill $FAKE; fail "search: look, into a list and back, queue, play, nothing"; }
+MM_SOCK="$T/fake.sock" $TTY 1 100 "$TUI" 'wait:Tab Title' 'key:/' 'wait:search: ' 'key:osc' 'key:\r' \
+	'wait:▸ LP: One — Osc' 'legible:2' 'key:j' 'wait:Ten — Osc' 'key:q' 'gone:Ten — Osc' key:q ||
+	{ kill $FAKE; fail "search on one row: the result selected; q closes it"; }
+kill $FAKE; wait $FAKE 2>/dev/null || true
+L="$T/fake.sock.log"
+grep -qx 'search osc' "$L" || fail "search: not asked"
+grep -qx 'browse lib:album/osc/lp-one' "$L" || fail "search: the list not browsed"
+TAB=$(printf '\t')
+grep -qx "queue add track${TAB}/home/u/music/Osc/two.flac${TAB}Tab Title${TAB}Osc${TAB}LP: One${TAB}0:03" "$L" ||
+	fail "search: a result queued by its line"
+grep -qx 'play /home/u/music/Osc/two.flac' "$L" || fail "search: a track played by its URI"
+grep -qx 'search nothing' "$L" || fail "search: asked again"
+
 # --- the fit rule: a daemon of another major is refused, on start and while
 # running; one with a newer minor is followed
 NEXT_MAJOR="$((MAJ + 1)).0"

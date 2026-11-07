@@ -44,6 +44,13 @@ g/G the first and last, J/K (⇧↓/⇧↑) move it down or up, N puts it next
 after the item playing, ⏎ plays it, d removes it, a opens a line to add
 from; Tab, Esc or q close it. Moving needs a daemon with `queue mv`.
 
+/ opens search on the same glass, from the strip or the queue. Type what
+to look for and ⏎ asks every source; the results come up above the line,
+a list (an album, a playlist) marked ▸. j/k select, ⏎ plays a track or
+goes into a list, a queues it (with its title; a list as its tracks),
+⌫ goes back out of a list or to the line, / edits the search, Tab goes
+to the queue, Esc or q close it. The line edits as the add line does.
+
 The add line knows directories. A path is from your home (`~` is it, and
 an empty line lists it), and the rows above the line list what starts
 with what you have typed, directories first. Tab completes as readline

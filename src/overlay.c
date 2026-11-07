@@ -54,6 +54,7 @@ void overlay_free(struct overlay *o)
 	if (!o) return;
 	unmatch(o);
 	tui_list_free(&o->q);
+	tui_list_free(&o->found);
 	ncplane_destroy(o->n);
 	free(o);
 }
@@ -233,6 +234,33 @@ static enum overlay_did add(struct overlay *o, char **argv, const char *word)
 	return OVERLAY_COMMAND;
 }
 
+/* A line's editing keys: ctrl+u clears it, ctrl+w takes back a word or
+ * a directory, backspace a letter; a key types what it says (a ~ behind
+ * ctrl, say), but ctrl or alt with a letter or a digit is a chord, not
+ * text. @returns 1 if the line changed. */
+static int edit(char *buf, size_t cap, uint32_t id, const struct ncinput *ni)
+{
+	size_t len = strlen(buf);
+	int ctrl = ni && ncinput_ctrl_p(ni), alt = ni && ncinput_alt_p(ni);
+	if (ctrl && (id == 'u' || id == 'U')) {
+		buf[0] = '\0';
+	} else if (ctrl && (id == 'w' || id == 'W')) {
+		rubout(buf);
+	} else if (id == NCKEY_BACKSPACE || id == 0x7f || id == 0x08) {
+		while (len && (buf[len - 1] & 0xc0) == 0x80) len--; /* a whole letter */
+		if (len) len--;
+		buf[len] = '\0';
+	} else if (id >= 0x20 && !nckey_synthesized_p(id) && ni && ni->utf8[0] &&
+	           !((ctrl || alt) && id < 0x80 && isalnum((int)id))) {
+		size_t n = strlen(ni->utf8);
+		if (len + n >= cap) return 0;
+		memcpy(buf + len, ni->utf8, n + 1);
+	} else {
+		return 0;
+	}
+	return 1;
+}
+
 /* ⏎ on the add: line: a URI as typed; a directory goes into it; a file is
  * added whole; a path to nothing but the start of one match takes it. */
 static enum overlay_did enter(struct overlay *o, char **argv)
@@ -266,8 +294,6 @@ static enum overlay_did enter(struct overlay *o, char **argv)
 /* The add: line's keys: every key is the line's while it is up. */
 static enum overlay_did adding(struct overlay *o, uint32_t id, const struct ncinput *ni, char **argv)
 {
-	size_t len = strlen(o->input);
-	int ctrl = ni && ncinput_ctrl_p(ni), alt = ni && ncinput_alt_p(ni);
 	if (id == NCKEY_ESC) {
 		o->adding = 0;
 		unmatch(o);
@@ -278,35 +304,160 @@ static enum overlay_did adding(struct overlay *o, uint32_t id, const struct ncin
 		complete(o);
 		return OVERLAY_TAKEN;
 	}
-	if (ctrl && (id == 'u' || id == 'U')) {
-		o->input[0] = '\0';
-	} else if (ctrl && (id == 'w' || id == 'W')) {
-		rubout(o->input);
-	} else if (id == NCKEY_BACKSPACE || id == 0x7f || id == 0x08) {
-		while (len && (o->input[len - 1] & 0xc0) == 0x80) len--; /* a whole letter */
-		if (len) len--;
-		o->input[len] = '\0';
-	} else if (id >= 0x20 && !nckey_synthesized_p(id) && ni && ni->utf8[0] &&
-	           !((ctrl || alt) && id < 0x80 && isalnum((int)id))) {
-		/* a key with modifiers types what it says (a ~ behind ctrl, say),
-		 * but ctrl or alt with a letter or a digit is a chord, not text */
-		size_t n = strlen(ni->utf8);
-		if (len + n < sizeof(o->input)) memcpy(o->input + len, ni->utf8, n + 1);
-	} else {
-		return OVERLAY_TAKEN;
-	}
-	overlay_scan(o);
+	if (edit(o->input, sizeof(o->input), id, ni)) overlay_scan(o);
 	return OVERLAY_TAKEN;
+}
+
+/* ------------------------------------------------------------------ search */
+
+static const char *dash(const char *s) { return s && s[0] ? s : "-"; }
+
+void overlay_line(const struct tui_item *it, char *out, size_t n)
+{
+	snprintf(out, n, "%s\t%s\t%s\t%s\t%s\t%s", it->kind == TUI_LIST ? "list" : "track", it->uri, dash(it->title),
+	         dash(it->artist), dash(it->album), dash(it->duration));
+}
+
+void overlay_found(struct overlay *o, const char *reply)
+{
+	tui_list_free(&o->found);
+	memset(&o->found, 0, sizeof(o->found));
+	if (reply && tui_list_items(&o->found, reply) < 0) {
+		tui_list_free(&o->found);
+		memset(&o->found, 0, sizeof(o->found));
+	}
+	o->searched = 1;
+	if (o->fsel >= o->found.n) o->fsel = o->found.n ? o->found.n - 1 : 0;
+}
+
+void overlay_note(struct overlay *o, const char *s)
+{
+	snprintf(o->note, sizeof(o->note), "%s", s ? s : "");
+	size_t n = strlen(o->note);
+	while (n && (o->note[n - 1] == '\n' || o->note[n - 1] == ' ')) o->note[--n] = '\0';
+}
+
+static enum overlay_did words2(char **argv, const char *a, const char *b)
+{
+	argv[0] = (char *)a;
+	argv[1] = (char *)b;
+	argv[2] = NULL;
+	return OVERLAY_FETCH;
+}
+
+/* The search, or the list we are in, asked again. */
+static enum overlay_did refetch(struct overlay *o, char **argv)
+{
+	if (!o->depth) return words2(argv, "search", o->query);
+	return words2(argv, "browse", o->trail[o->depth - 1].uri);
+}
+
+static enum overlay_did to_queue(struct overlay *o)
+{
+	o->search = o->typing = 0;
+	return OVERLAY_OPENED; /* read the queue */
+}
+
+/* The search: line's keys. */
+static enum overlay_did typing(struct overlay *o, uint32_t id, const struct ncinput *ni, char **argv)
+{
+	if (id == NCKEY_ESC) {
+		o->typing = 0;
+		if (o->searched || o->depth) return OVERLAY_TAKEN; /* back to the results */
+		o->open = o->search = 0;
+		return OVERLAY_CLOSED;
+	}
+	if (id == NCKEY_ENTER || id == '\r' || id == '\n') {
+		if (!o->query[0]) return OVERLAY_TAKEN;
+		o->typing = 0;
+		o->depth = 0;
+		o->fsel = o->ftop = 0;
+		return words2(argv, "search", o->query);
+	}
+	if (id == NCKEY_TAB || id == '\t') return to_queue(o);
+	if (edit(o->query, sizeof(o->query), id, ni)) o->searched = 0;
+	return OVERLAY_TAKEN;
+}
+
+/* The results' keys. */
+static enum overlay_did results(struct overlay *o, uint32_t id, const struct ncinput *ni, char **argv)
+{
+	size_t n = o->found.n;
+	if (ni && (ncinput_ctrl_p(ni) || ncinput_alt_p(ni))) return OVERLAY_NOT_MINE;
+	switch (id) {
+	case NCKEY_ESC: case 'q':
+		o->open = o->search = 0;
+		return OVERLAY_CLOSED;
+	case NCKEY_TAB:
+		return to_queue(o);
+	case '/':
+		o->typing = 1;
+		return OVERLAY_TAKEN;
+	case 'j': case NCKEY_DOWN:
+		if (o->fsel + 1 < n) o->fsel++;
+		return OVERLAY_TAKEN;
+	case 'k': case NCKEY_UP:
+		if (o->fsel) o->fsel--;
+		return OVERLAY_TAKEN;
+	case 'g': case NCKEY_HOME:
+		o->fsel = 0;
+		return OVERLAY_TAKEN;
+	case 'G': case NCKEY_END:
+		o->fsel = n ? n - 1 : 0;
+		return OVERLAY_TAKEN;
+	case NCKEY_BACKSPACE: case 0x7f: case 0x08: case 'h': case NCKEY_LEFT:
+		if (!o->depth) {
+			o->typing = 1;
+			return OVERLAY_TAKEN;
+		}
+		o->depth--;
+		o->fsel = o->trail[o->depth].sel;
+		return refetch(o, argv);
+	case NCKEY_ENTER: case '\r': case '\n': case 'l': case NCKEY_RIGHT: {
+		if (!n) return OVERLAY_TAKEN;
+		const struct tui_item *it = &o->found.v[o->fsel];
+		if (it->kind == TUI_LIST) {
+			if (o->depth == OVERLAY_DEPTH) return OVERLAY_TAKEN;
+			snprintf(o->trail[o->depth].uri, sizeof(o->trail[o->depth].uri), "%s", it->uri);
+			strip_item_name(it, o->trail[o->depth].name, sizeof(o->trail[o->depth].name));
+			o->trail[o->depth].sel = o->fsel;
+			o->depth++;
+			o->fsel = o->ftop = 0;
+			return words2(argv, "browse", o->trail[o->depth - 1].uri);
+		}
+		if (id == 'l' || id == NCKEY_RIGHT) return OVERLAY_TAKEN; /* into lists only */
+		snprintf(o->line, sizeof(o->line), "%s", it->uri);
+		words2(argv, "play", o->line);
+		return OVERLAY_COMMAND;
+	}
+	case 'a':
+		if (!n) return OVERLAY_TAKEN;
+		overlay_line(&o->found.v[o->fsel], o->line, sizeof(o->line));
+		argv[0] = "queue";
+		argv[1] = "add";
+		argv[2] = o->line;
+		argv[3] = NULL;
+		return OVERLAY_COMMAND;
+	default:
+		return OVERLAY_NOT_MINE;
+	}
 }
 
 enum overlay_did overlay_key(struct overlay *o, uint32_t id, const struct ncinput *ni, char **argv)
 {
+	o->note[0] = '\0';
+	if (!o->open && id == '/' && !(ni && (ncinput_ctrl_p(ni) || ncinput_alt_p(ni)))) {
+		o->open = o->search = o->typing = 1;
+		o->adding = 0;
+		return OVERLAY_TAKEN;
+	}
+	if (o->open && o->search) return o->typing ? typing(o, id, ni, argv) : results(o, id, ni, argv);
 	if (o->open && o->adding) return adding(o, id, ni, argv); /* before modifiers: its keys may have them */
 	if (ni && (ncinput_ctrl_p(ni) || ncinput_alt_p(ni))) return OVERLAY_NOT_MINE;
 	if (!o->open) {
 		if (id != NCKEY_TAB) return OVERLAY_NOT_MINE;
 		o->open = 1;
-		o->adding = 0;
+		o->adding = o->search = 0;
 		return OVERLAY_OPENED;
 	}
 	size_t n = o->q.n;
@@ -340,6 +491,9 @@ enum overlay_did overlay_key(struct overlay *o, uint32_t id, const struct ncinpu
 		o->adding = 1;
 		o->input[0] = '\0';
 		overlay_scan(o); /* an empty line is home */
+		return OVERLAY_TAKEN;
+	case '/':
+		o->search = o->typing = 1;
 		return OVERLAY_TAKEN;
 	default:
 		return OVERLAY_NOT_MINE;
@@ -501,6 +655,111 @@ static void item(struct overlay *o, const struct theme *t, size_t i, int y, unsi
 	}
 }
 
+/* A result: ▸ for a list, its name, artist, album when there is room,
+ * duration at the right; one label, the duration another. */
+static void result(struct overlay *o, const struct theme *t, size_t i, int y, unsigned cols)
+{
+	struct ncplane *n = o->n;
+	const struct tui_item *it = &o->found.v[i];
+	int sel = i == o->fsel, end = (int)cols - 1;
+	uint32_t under = sel ? bar_tint(t) : tint(t);
+	if (sel) bar(n, t, y, cols);
+	int dw = it->duration[0] ? cols_of(it->duration) + 2 : 0;
+	if (dw) {
+		char d[40];
+		snprintf(d, sizeof(d), " %s", it->duration);
+		ink(n, sel ? role(t, TH_FG) : role(t, TH_DIM), under);
+		put(n, y, end - dw + 1, d, end);
+	}
+	char name[256];
+	strip_item_name(it, name, sizeof(name));
+	ink(n, role(t, TH_CYAN), under);
+	int x = put(n, y, 1, it->kind == TUI_LIST ? "▸ " : "  ", end);
+	ink(n, role(t, TH_FG), under);
+	x = put(n, y, x, name, end - dw);
+	if (it->artist[0] && x + 4 < end - dw) {
+		ink(n, sel ? role(t, TH_FG) : role(t, TH_DIM), under);
+		x = put(n, y, x, " — ", end - dw);
+		ink(n, sel ? role(t, TH_FG) : role(t, TH_VIOLET), under);
+		x = put(n, y, x, it->artist, end - dw);
+	}
+	if (it->kind == TUI_TRACK && it->album[0] && x + 8 < end - dw) {
+		ink(n, sel ? role(t, TH_FG) : role(t, TH_DIM), under);
+		x = put(n, y, x, " · ", end - dw);
+		put(n, y, x, it->album, end - dw);
+	}
+}
+
+/* The line being typed into, `label` before it, at row y. */
+static void typed_line(struct overlay *o, const struct theme *t, int y, const char *label, const char *text,
+                       unsigned cols)
+{
+	struct ncplane *n = o->n;
+	int end = (int)cols - 1;
+	uint32_t glass = tint(t);
+	ink(n, role(t, TH_CYAN), glass);
+	int x = put(n, y, 1, label, end);
+	ink(n, role(t, TH_FG), glass);
+	const char *s = text; /* the end of what is typed stays in view */
+	while (cols_of(s) > end - x - 1 && *s) {
+		s++;
+		while ((*s & 0xc0) == 0x80) s++;
+	}
+	x = put(n, y, x, s, end);
+	ink(n, role(t, TH_CYAN), glass);
+	ncplane_putstr_yx(n, y, x, "▏");
+}
+
+static void draw_search(struct overlay *o, const struct theme *t, const char *msg, unsigned rows, unsigned cols)
+{
+	struct ncplane *n = o->n;
+	uint32_t glass = tint(t);
+	int end = (int)cols - 1, head = rows >= 4, line = o->typing && rows >= 2;
+	int list = (int)rows - head - line, y = 0;
+	if (rows == 1 && o->typing) list = 0;
+	if (head) {
+		ink(n, role(t, TH_MAGENTA), glass);
+		int x = put(n, 0, 1, "search ", end);
+		if (o->query[0] && !o->typing) {
+			ink(n, role(t, TH_CYAN), glass);
+			x = put(n, 0, x, o->query, end);
+			for (int d = 0; d < o->depth; d++) {
+				ink(n, role(t, TH_DIM), glass);
+				x = put(n, 0, x, " › ", end);
+				ink(n, role(t, TH_CYAN), glass);
+				x = put(n, 0, x, o->trail[d].name, end);
+			}
+			if (o->found.n) {
+				char count[48];
+				snprintf(count, sizeof(count), "  %zu/%zu%s", o->fsel + 1, o->found.n, o->found.more ? "+" : "");
+				ink(n, role(t, TH_DIM), glass);
+				x = put(n, 0, x, count, end);
+			}
+		}
+		x += 3;
+		const char *keys = o->typing ? "⏎ searches · esc" : "j k select · ⏎ play · a queue · ⌫ back · / search · tab queue";
+		int err = msg && msg[0];
+		if (err) keys = msg;
+		else if (o->note[0]) keys = o->note;
+		int kw = cols_of(keys);
+		ink(n, err ? role(t, TH_ORANGE) : o->note[0] ? role(t, TH_GREEN) : role(t, TH_DIM), glass);
+		put(n, 0, end - kw > x ? end - kw : x, keys, end);
+		y = 1;
+	}
+	if (list > 0) {
+		if (!o->found.n) {
+			ink(n, role(t, TH_DIM), glass);
+			put(n, y, 3, !o->searched ? "type what to look for, ⏎ to look" : o->depth ? "nothing in it" : "nothing found",
+			    end);
+		} else {
+			o->ftop = overlay_top(o->fsel, o->ftop, o->found.n, list);
+			for (int i = 0; i < list && o->ftop + (size_t)i < o->found.n; i++)
+				result(o, t, o->ftop + (size_t)i, y + i, cols);
+		}
+	}
+	if (o->typing) typed_line(o, t, (int)rows - 1, "search: ", o->query, cols);
+}
+
 void overlay_draw(struct overlay *o, const struct theme *t, const char *msg, unsigned rows, unsigned cols)
 {
 	struct ncplane *n = o->n;
@@ -521,6 +780,10 @@ void overlay_draw(struct overlay *o, const struct theme *t, const char *msg, uns
 	ncplane_erase(n);
 	if (!o->open || !rows || !cols) return;
 	ncplane_set_styles(n, NCSTYLE_NONE);
+	if (o->search) {
+		draw_search(o, t, msg, rows, cols);
+		return;
+	}
 	uint32_t glass = tint(t);
 	int head = rows >= 4, line = o->adding && rows >= 2;
 	int list = (int)rows - head - line, y = 0, end = (int)cols - 1;
@@ -547,9 +810,10 @@ void overlay_draw(struct overlay *o, const struct theme *t, const char *msg, uns
 		int x = put(n, 0, 1, "queue ", end);
 		ink(n, role(t, TH_DIM), glass);
 		x = put(n, 0, x, count, end) + 3;
-		const char *keys = msg && msg[0] ? msg : "j k select · J K move · N next · ⏎ play · a add · d remove · tab close";
+		const char *keys = msg && msg[0] ? msg : o->note[0] ? o->note
+		                 : "j k select · J K move · N next · ⏎ play · a add · d remove · / search · tab close";
 		int kw = cols_of(keys);
-		ink(n, msg && msg[0] ? role(t, TH_ORANGE) : role(t, TH_DIM), glass);
+		ink(n, msg && msg[0] ? role(t, TH_ORANGE) : o->note[0] ? role(t, TH_GREEN) : role(t, TH_DIM), glass);
 		put(n, 0, end - kw > x ? end - kw : x, keys, end);
 		y = 1;
 	}
@@ -587,21 +851,7 @@ void overlay_draw(struct overlay *o, const struct theme *t, const char *msg, uns
 		}
 	}
 	if (o->adding) { /* the add: line, at the bottom, or the only row */
-		int ay = (int)rows - 1;
 		if (rows == 1) ncplane_erase(n);
-		ink(n, role(t, TH_CYAN), glass);
-		int x = put(n, ay, 1, "add: ", end);
-		ink(n, role(t, TH_FG), glass);
-		int w = cols_of(o->input);
-		/* the end of what is typed stays in view */
-		const char *s = o->input;
-		while (w > end - x - 1 && *s) {
-			s++;
-			while ((*s & 0xc0) == 0x80) s++;
-			w = cols_of(s);
-		}
-		x = put(n, ay, x, s, end);
-		ink(n, role(t, TH_CYAN), glass);
-		ncplane_putstr_yx(n, ay, x, "▏");
+		typed_line(o, t, (int)rows - 1, "add: ", o->input, cols);
 	}
 }

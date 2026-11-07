@@ -20,7 +20,8 @@
  * Socket: --socket, else $MM_SOCK, else the daemon's default, as mmctl. 
  *
  * Keys: the transport keys (keys.h), l the next look (of those the
- * strip is tall enough for), tab the queue over it (overlay.h), q quits.
+ * strip is tall enough for), tab the queue over it and / search
+ * (overlay.h), q quits.
  *
  * Frames: every STRIP_FRAME_MS while the strip is changing by itself (a
  * look that moves, a title decoding in, a pause breathing); otherwise a
@@ -176,13 +177,24 @@ static double since(const struct timespec *t)
 }
 
 /* Run a key's command; an error shows in the strip for MSG_MS. */
-static void command(int argc, char **argv, struct strip_model *m, struct timespec *msg_until)
+/* Run a command; an error is the strip's message for a while. `said`
+ * (if not NULL) gets what the daemon said to it when it did it. */
+static void command_said(int argc, char **argv, struct strip_model *m, struct timespec *msg_until, char *said,
+                         size_t n)
 {
 	char reply[256];
 	int rc = tui_call(argc, argv, reply, sizeof(reply));
-	if (rc == TUI_OK) return;
+	if (rc == TUI_OK) {
+		if (said) snprintf(said, n, "%.*s", (int)(n ? n - 1 : 0), reply); /* cut to fit */
+		return;
+	}
 	snprintf(m->msg, sizeof(m->msg), "%.16s: %.128s", argv[0], rc == TUI_NO_DAEMON ? "mediamaster is not running" : reply);
 	deadline(msg_until, MSG_MS);
+}
+
+static void command(int argc, char **argv, struct strip_model *m, struct timespec *msg_until)
+{
+	command_said(argc, argv, m, msg_until, NULL, 0);
 }
 
 /* How the strip keeps up with the daemon. */
@@ -433,11 +445,23 @@ static int run(const struct theme *theme, int look)
 			else if (!m.refused[0] && k != NCKEY_RESIZE && (did = overlay_key(ov, k, &ni, cargv)) != OVERLAY_NOT_MINE) {
 				dirty = 1;
 				if (did == OVERLAY_OPENED) need_overlay = 2; /* read it, the item playing selected */
+				for (cargc = 0; (did == OVERLAY_COMMAND || did == OVERLAY_FETCH) && cargv[cargc]; cargc++) {}
 				if (did == OVERLAY_COMMAND) {
-					for (cargc = 0; cargv[cargc]; cargc++) {}
-					command(cargc, cargv, &m, &msg_until);
+					char said[128] = "";
+					command_said(cargc, cargv, &m, &msg_until, said, sizeof(said));
+					overlay_note(ov, said);
 					need_status = need_queue = 1;
 					if (!need_overlay) need_overlay = 1;
+				}
+				if (did == OVERLAY_FETCH) { /* search's results, or a list's items */
+					static char found[65536];
+					int rc = tui_call(cargc, cargv, found, sizeof(found));
+					overlay_found(ov, rc == TUI_OK ? found : NULL);
+					if (rc != TUI_OK) {
+						snprintf(m.msg, sizeof(m.msg), "%.16s: %.128s", cargv[0],
+						         rc == TUI_NO_DAEMON ? "mediamaster is not running" : found);
+						deadline(&msg_until, MSG_MS);
+					}
 				}
 			} else if (k == NCKEY_RESIZE) {
 				notcurses_refresh(nc, NULL, NULL);
