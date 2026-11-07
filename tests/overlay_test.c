@@ -32,6 +32,56 @@ static int is(const char *a0, const char *a1, const char *a2)
 	       !argv[3];
 }
 
+static int is4(const char *a0, const char *a1, const char *a2, const char *a3)
+{
+	return argv[0] && !strcmp(argv[0], a0) && argv[1] && !strcmp(argv[1], a1) && argv[2] && !strcmp(argv[2], a2) &&
+	       argv[3] && !strcmp(argv[3], a3) && !argv[4];
+}
+
+static int moves(void)
+{
+	struct overlay o;
+	memset(&o, 0, sizeof(o));
+	key(&o, NCKEY_TAB, NULL, 0);
+	overlay_set(&o, Q, 1); /* four, the third playing, selected */
+	CHECK(key(&o, 'J', "J", NCKEY_MOD_SHIFT) == OVERLAY_COMMAND && is4("queue", "mv", "3", "4") && o.sel == 3,
+	      "J: one down, the selection with it");
+	CHECK(key(&o, 'J', "J", NCKEY_MOD_SHIFT) == OVERLAY_TAKEN && o.sel == 3, "not past the last");
+	CHECK(key(&o, 'K', "K", NCKEY_MOD_SHIFT) == OVERLAY_COMMAND && is4("queue", "mv", "4", "3") && o.sel == 2,
+	      "K: one up");
+	CHECK(key(&o, NCKEY_UP, NULL, NCKEY_MOD_SHIFT) == OVERLAY_COMMAND && is4("queue", "mv", "3", "2") && o.sel == 1,
+	      "shift+up too");
+	CHECK(key(&o, NCKEY_DOWN, NULL, NCKEY_MOD_SHIFT) == OVERLAY_COMMAND && is4("queue", "mv", "2", "3"),
+	      "shift+down too");
+	o.sel = 0;
+	CHECK(key(&o, 'K', "K", NCKEY_MOD_SHIFT) == OVERLAY_TAKEN && o.sel == 0, "not above the first");
+	CHECK(key(&o, NCKEY_DOWN, NULL, 0) == OVERLAY_TAKEN && o.sel == 1, "down without shift only selects");
+
+	/* N: next after the item playing (the third) */
+	o.sel = 3;
+	CHECK(key(&o, 'N', "N", NCKEY_MOD_SHIFT) == OVERLAY_TAKEN && o.sel == 3, "N on what is already next: nothing");
+	char q5[512];
+	snprintf(q5, sizeof(q5), "%s5\tsine:330:30\t-\t-\t-\t-\n", Q);
+	overlay_set(&o, q5, 0);
+	o.sel = 4;
+	CHECK(key(&o, 'N', "N", NCKEY_MOD_SHIFT) == OVERLAY_COMMAND && is4("queue", "mv", "5", "next") && o.sel == 3,
+	      "N from below: right after the playing one");
+	o.sel = 0;
+	CHECK(key(&o, 'N', "N", NCKEY_MOD_SHIFT) == OVERLAY_COMMAND && is4("queue", "mv", "1", "next") && o.sel == 2,
+	      "N from above: the list closes up behind it, so it lands where the playing one was");
+	o.sel = 2;
+	CHECK(key(&o, 'N', "N", NCKEY_MOD_SHIFT) == OVERLAY_TAKEN, "N on the item playing: nothing to do");
+	overlay_set(&o, "1\ta\t-\t-\t-\t-\n2\tb\t-\t-\t-\t-\n", 0);
+	o.sel = 1;
+	CHECK(key(&o, 'N', "N", NCKEY_MOD_SHIFT) == OVERLAY_COMMAND && is4("queue", "mv", "2", "next") && o.sel == 0,
+	      "nothing playing: next is the top");
+	o.sel = 0;
+	CHECK(key(&o, 'N', "N", NCKEY_MOD_SHIFT) == OVERLAY_TAKEN, "already the top");
+	CHECK(key(&o, 'n', "n", 0) == OVERLAY_NOT_MINE, "n is still the strip's: the next track");
+	tui_list_free(&o.q);
+	return 0;
+}
+
 static int opening(void)
 {
 	struct overlay o;
@@ -248,6 +298,7 @@ int main(void)
 {
 	RUN(opening);
 	RUN(moving);
+	RUN(moves);
 	RUN(expand);
 	RUN(adding);
 	RUN(window);

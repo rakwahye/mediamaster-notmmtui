@@ -58,6 +58,37 @@ void overlay_free(struct overlay *o)
 	free(o);
 }
 
+/* J and K: the selected item one down or up, the selection with it;
+ * N: it right after the item playing, where the daemon puts it. */
+static enum overlay_did move(struct overlay *o, char **argv, int by, int next)
+{
+	size_t n = o->q.n, s = o->sel;
+	if (!n) return OVERLAY_TAKEN;
+	size_t to;
+	if (next) {
+		long cur = -1;
+		for (size_t i = 0; i < n; i++)
+			if (o->q.v[i].cursor) cur = (long)i;
+		if (cur < 0) to = 0;
+		else if ((long)s == cur) return OVERLAY_TAKEN; /* it is playing: already there */
+		else to = (long)s < cur ? (size_t)cur : (size_t)cur + 1; /* from above, the list closes up behind it */
+		if (to == s) return OVERLAY_TAKEN;
+	} else {
+		if ((by < 0 && !s) || (by > 0 && s + 1 >= n)) return OVERLAY_TAKEN;
+		to = by < 0 ? s - 1 : s + 1;
+	}
+	snprintf(o->pos, sizeof(o->pos), "%ld", o->q.v[s].pos);
+	snprintf(o->to, sizeof(o->to), "%s", next ? "next" : "");
+	if (!next) snprintf(o->to, sizeof(o->to), "%ld", o->q.v[to].pos);
+	argv[0] = "queue";
+	argv[1] = "mv";
+	argv[2] = o->pos;
+	argv[3] = o->to;
+	argv[4] = NULL;
+	o->sel = to; /* the selection goes with it; the list is read again */
+	return OVERLAY_COMMAND;
+}
+
 /* ------------------------------------------------------------------ paths */
 
 int overlay_expand(const char *in, const char *home, char *out, size_t n)
@@ -279,6 +310,10 @@ enum overlay_did overlay_key(struct overlay *o, uint32_t id, const struct ncinpu
 		return OVERLAY_OPENED;
 	}
 	size_t n = o->q.n;
+	int shift = ni && ncinput_shift_p(ni);
+	if (id == 'J' || (shift && (id == 'j' || id == NCKEY_DOWN))) return move(o, argv, 1, 0);
+	if (id == 'K' || (shift && (id == 'k' || id == NCKEY_UP))) return move(o, argv, -1, 0);
+	if (id == 'N' || (shift && id == 'n')) return move(o, argv, 0, 1);
 	switch (id) {
 	case NCKEY_TAB: case NCKEY_ESC: case 'q':
 		o->open = 0;
@@ -512,7 +547,7 @@ void overlay_draw(struct overlay *o, const struct theme *t, const char *msg, uns
 		int x = put(n, 0, 1, "queue ", end);
 		ink(n, role(t, TH_DIM), glass);
 		x = put(n, 0, x, count, end) + 3;
-		const char *keys = msg && msg[0] ? msg : "j k move · ⏎ play · a add · d remove · tab close";
+		const char *keys = msg && msg[0] ? msg : "j k select · J K move · N next · ⏎ play · a add · d remove · tab close";
 		int kw = cols_of(keys);
 		ink(n, msg && msg[0] ? role(t, TH_ORANGE) : role(t, TH_DIM), glass);
 		put(n, 0, end - kw > x ? end - kw : x, keys, end);

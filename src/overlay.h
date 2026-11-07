@@ -21,6 +21,8 @@
  * The item playing has ▶; the one selected is on violet.
  *
  *     j k ↑ ↓  select          g G    first, last
+ *     J K ⇧↑ ⇧↓ move it down, up (queue mv)
+ *     N        play it next: right after the item playing (queue mv n next)
  *     ⏎        play it         d      remove it
  *     a        add: a line to type a path or a URI into
  *
@@ -51,7 +53,7 @@ struct ncplane;
 struct ncinput;
 
 #define OVERLAY_INPUT 256
-#define OVERLAY_ARGV  4   /* a command's words and its NULL */
+#define OVERLAY_ARGV  5   /* a command's words and its NULL */
 
 struct overlay {
 	struct ncplane *n;
@@ -60,7 +62,7 @@ struct overlay {
 	size_t sel, top;       /* the item selected, the first one shown */
 	int adding;            /* the add: line is up */
 	char input[OVERLAY_INPUT];
-	char pos[24];          /* the word a command's position lives in */
+	char pos[24], to[24];  /* the words a command's positions live in */
 	char path[4096];       /* the word an added path lives in, whole */
 	char home[1024];       /* where a path starts from */
 	char **match;          /* what the add: line's path could go on to: names, a directory's with / */

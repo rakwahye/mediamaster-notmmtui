@@ -315,7 +315,7 @@ $TTY 12 100 "$TUI" 'wait:4:00' 'key:\t' 'wait:queue 1/3' 'wait:▶ 1  sine:440:2
 	'key:\t' 'gone:queue' 'wait:3:20' key:q || fail "queue: open, move, remove, play, add, close"
 $TTY 1 100 "$TUI" 'wait:/ 3:20' 'key:\t' 'wait:▶ 2  sine:330:200' 'gone:/ 3:20' 'legible:2' 'key:k' \
 	'wait:1  sine:440:240' 'key:q' 'wait:/ 3:20' key:q || fail "queue on one row: the item selected; q closes it"
-$TTY 4 100 "$TUI" 'wait:/ 3:20' 'key:\t' 'wait:queue 2/3' 'wait:j k move' 'key:\e' 'gone:queue' key:q ||
+$TTY 4 100 "$TUI" 'wait:/ 3:20' 'key:\t' 'wait:queue 2/3' 'wait:J K move' 'key:\e' 'gone:queue' key:q ||
 	fail "queue on four rows: a header; esc closes it"
 
 # the add line knows directories: from home, completed with tab, a file
@@ -327,6 +327,17 @@ HOME="$T/home" $TTY 12 100 "$TUI" 'wait:3:20' 'key:\t' 'key:a' 'wait:add ~/' 'wa
 	'key:\r' 'wait:4  song' 'gone:add:' 'key:a' 'key:~/Ma' 'key:\r' 'wait:add: ~/Mail/' 'key:\e' 'gone:add:' \
 	'key:\t' 'gone:queue' key:q || fail "queue: the add line, directories and tab"
 "$MMCTL" queue list -l | grep -q "$T/home/Music/Osc/song.flac" || fail "queue: the file added by its whole path"
+
+# J and K move an item, N puts it next after the item playing; the
+# selection goes with it
+"$MMCTL" queue clear >/dev/null
+"$MMCTL" play sine:440:240 >/dev/null
+"$MMCTL" queue add sine:201:30 sine:202:30 sine:203:30 >/dev/null
+$TTY 12 100 "$TUI" 'wait:4:00' 'key:\t' 'wait:queue 1/4' 'key:G' 'wait:queue 4/4' 'key:K' 'wait:queue 3/4' \
+	'wait:3  sine:203:30' 'wait:4  sine:202:30' 'key:G' 'key:N' 'wait:queue 2/4' 'wait:2  sine:202:30' \
+	'wait:3  sine:201:30' 'key:\t' key:q || fail "queue: J K move, N next"
+[ "$("$MMCTL" queue list | awk '{print $NF}' | tr '\n' ' ')" = "sine:440:240 sine:202:30 sine:201:30 sine:203:30 " ] ||
+	fail "queue: the daemon's list after K and N"
 "$MMCTL" play sine:440:30 >/dev/null
 
 # the position counts on between reads; the daemon goes, comes back, is followed

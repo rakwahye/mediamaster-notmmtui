@@ -40,8 +40,9 @@ n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits.
 it in a short terminal or pane; it fills what it is given.
 
 Tab opens the queue over the strip, on the item playing: j/k (↑/↓) select,
-g/G the first and last, ⏎ plays it, d removes it, a opens a line to add
-from; Tab, Esc or q close it.
+g/G the first and last, J/K (⇧↓/⇧↑) move it down or up, N puts it next
+after the item playing, ⏎ plays it, d removes it, a opens a line to add
+from; Tab, Esc or q close it. Moving needs a daemon with `queue mv`.
 
 The add line knows directories. A path is from your home (`~` is it, and
 an empty line lists it), and the rows above the line list what starts
