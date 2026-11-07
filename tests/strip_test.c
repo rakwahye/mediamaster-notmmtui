@@ -103,13 +103,18 @@ static int looks(void)
 {
 	CHECK(strip_look_for(1) == STRIP_POWERLINE, "one row: powerline");
 	CHECK(strip_look_for(2) == STRIP_SCOPE, "two rows: scope");
-	CHECK(strip_look_for(3) == STRIP_ROAD && strip_look_for(5) == STRIP_ROAD, "three rows or more: road");
+	CHECK(strip_look_for(3) == STRIP_ROAD, "three rows: road");
+	CHECK(strip_look_for(4) == STRIP_HORIZON && strip_look_for(9) == STRIP_HORIZON, "four rows or more: horizon");
 	CHECK(strip_look_next(STRIP_PLASMA, 1) == STRIP_PLAIN, "one row: scope is skipped");
 	CHECK(strip_look_next(STRIP_PLAIN, 1) == STRIP_POWERLINE, "and round again");
 	CHECK(strip_look_next(STRIP_PLASMA, 2) == STRIP_SCOPE, "two rows: scope is one of them");
 	CHECK(strip_look_next(STRIP_SCOPE, 2) == STRIP_PLAIN, "but not road");
 	CHECK(strip_look_next(STRIP_SCOPE, 3) == STRIP_ROAD, "three rows: road too");
 	CHECK(strip_look_find("road") == STRIP_ROAD && strip_look_moves(STRIP_ROAD), "road, and it moves");
+	CHECK(strip_look_next(STRIP_ROAD, 3) == STRIP_PLAIN, "three rows: not horizon");
+	CHECK(strip_look_next(STRIP_ROAD, 4) == STRIP_HORIZON, "four rows: horizon too");
+	CHECK(strip_look_find("horizon") == STRIP_HORIZON && strip_look_moves(STRIP_HORIZON), "horizon, and it moves");
+	CHECK(!strip_look_moves(STRIP_POWERLINE) && !strip_look_moves(STRIP_PLAIN), "powerline and plain do not");
 	CHECK(strip_look_find("scope") == STRIP_SCOPE && strip_look_moves(STRIP_SCOPE), "scope, and it moves");
 	return 0;
 }
@@ -132,6 +137,28 @@ static int scope(void)
 		hi = v > hi ? v : hi;
 	}
 	CHECK(hi - lo > 1.0, "and swinging wide rather than cancelling");
+	return 0;
+}
+
+static int horizon(void)
+{
+	CHECK(strip_horizon_tie(0, 4, 0) == 0, "the first tie starts on the horizon");
+	CHECK(fabs(strip_horizon_tie(1, 4, 0) - 0.25) < 1e-9, "the next a quarter of the way in");
+	CHECK(strip_horizon_tie(0, 4, 1) > strip_horizon_tie(0, 4, 0), "they come in");
+	double t = 0.25 / 0.35 + 0.1; /* the last tie (from 0.75) has passed your feet */
+	CHECK(strip_horizon_tie(3, 4, t) < 0.1, "and once past, are back on the horizon");
+	for (int i = 0; i < 4; i++) {
+		double d = strip_horizon_tie(i, 4, 123.4);
+		CHECK(d >= 0 && d < 1, "always between the horizon and your feet");
+	}
+	CHECK(strip_horizon_tie(0, 4, -1.0) >= 0, "even on a clock before zero");
+
+	float band[TUI_BANDS] = { 0 };
+	band[0] = 0.9f;
+	band[TUI_BANDS - 1] = 0.3f;
+	CHECK(fabs(strip_horizon_hill(band, 0) - 0.9) < 1e-6, "by the sun: the lowest band");
+	CHECK(fabs(strip_horizon_hill(band, 1) - 0.3) < 1e-6, "at the far edge: the highest");
+	CHECK(strip_horizon_hill(band, 5) == strip_horizon_hill(band, 1), "no farther than the edge");
 	return 0;
 }
 
@@ -170,5 +197,6 @@ int main(void)
 	RUN(looks);
 	RUN(scope);
 	RUN(road);
+	RUN(horizon);
 	CHECK_PASS("test-strip");
 }

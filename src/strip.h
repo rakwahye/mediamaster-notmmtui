@@ -50,6 +50,16 @@
  *     ████████▇█████▆▄▂▃▅██▆▃
  *     ▶ Title — Artist     ▅▆ 1:23 / 6:53
  *
+ *   horizon    four rows or more: the road to the horizon. The top row
+ *              is the sky, glowing where the sun sits, with the one-row
+ *              words on it. Below it, in octants: more sky, and on the
+ *              horizon mountains made of the bands, mirrored about the
+ *              sun (bass by it, treble out at the edges); then the
+ *              ground, and a road from the sun towards you, rails fanning
+ *              out, cross-ties rushing in, faster as it gets louder and
+ *              on every beat. The sun, where the road meets the horizon,
+ *              is the playhead. A pause stops the road.
+ *
  * A theme with no colours of its own (plain) is drawn in the plain look,
  * and a look taller than the strip (strip_look_rows) in powerline. With
  * no look asked for, the height picks one (strip_look_for).
@@ -82,11 +92,11 @@
 
 struct ncplane;
 
-enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_SCOPE, STRIP_ROAD, STRIP_PLAIN, STRIP_LOOKS };
+enum strip_look { STRIP_POWERLINE, STRIP_PLASMA, STRIP_SCOPE, STRIP_ROAD, STRIP_HORIZON, STRIP_PLAIN, STRIP_LOOKS };
 
 #define STRIP_FRAME_MS 66 /* about 15 frames a second, for a look that moves */
 
-/** "powerline", "plasma", "scope", "road", "plain". */
+/** "powerline", "plasma", "scope", "road", "horizon", "plain". */
 const char *strip_look_name(int look);
 
 /** The look named `name`, or -1. */
@@ -95,7 +105,8 @@ int strip_look_find(const char *name);
 /** Whether `look` moves while playing (and needs frames, not ticks). */
 int strip_look_moves(int look);
 
-/** The rows `look` needs: 2 for scope, 3 for road, 1 for the rest. */
+/** The rows `look` needs: 2 for scope, 3 for road, 4 for horizon, 1 for
+ * the rest. */
 int strip_look_rows(int look);
 
 /** The look for a strip `rows` high when none was asked for. */
@@ -181,6 +192,16 @@ double strip_road_bar(const float *band, double u);
  * bar jumps to it and holds 0.4 s, then falls at 24 steps a second, never
  * below its bar. `hold` is each one's time left to hold. */
 void strip_road_peaks(float *peak, float *hold, const float *bar, int n, double dt);
+
+/** How near the horizon's cross-tie i of n is at time t (by the look's
+ * clock): 0 at the horizon .. 1 at your feet, the ties evenly spaced and
+ * coming in at 0.35 of the way a second, each back on the horizon once
+ * it has passed. */
+double strip_horizon_tie(int i, int n, double t);
+
+/** A mountain's height, 0..1, at d from the sun (0) to the edge farther
+ * from it (1): the bands from the lowest by the sun to the highest. */
+double strip_horizon_hill(const float *band, double d);
 
 /** "m:ss", or "h:mm:ss" from an hour. */
 void strip_clock(char *buf, size_t cap, double s);

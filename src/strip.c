@@ -50,7 +50,7 @@ void strip_clock(char *buf, size_t cap, double s)
 }
 
 static const char *const LOOK[STRIP_LOOKS] = {
-	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_SCOPE] = "scope", [STRIP_ROAD] = "road", [STRIP_PLAIN] = "plain",
+	[STRIP_POWERLINE] = "powerline", [STRIP_PLASMA] = "plasma", [STRIP_SCOPE] = "scope", [STRIP_ROAD] = "road", [STRIP_HORIZON] = "horizon", [STRIP_PLAIN] = "plain",
 };
 
 const char *strip_look_name(int look) { return look >= 0 && look < STRIP_LOOKS ? LOOK[look] : "?"; }
@@ -62,11 +62,17 @@ int strip_look_find(const char *name)
 	return -1;
 }
 
-int strip_look_moves(int look) { return look == STRIP_PLASMA || look == STRIP_SCOPE || look == STRIP_ROAD; }
+int strip_look_moves(int look) { return look != STRIP_POWERLINE && look != STRIP_PLAIN; }
 
-int strip_look_rows(int look) { return look == STRIP_SCOPE ? 2 : look == STRIP_ROAD ? 3 : 1; }
+int strip_look_rows(int look)
+{
+	return look == STRIP_SCOPE ? 2 : look == STRIP_ROAD ? 3 : look == STRIP_HORIZON ? 4 : 1;
+}
 
-int strip_look_for(unsigned rows) { return rows >= 3 ? STRIP_ROAD : rows == 2 ? STRIP_SCOPE : STRIP_POWERLINE; }
+int strip_look_for(unsigned rows)
+{
+	return rows >= 4 ? STRIP_HORIZON : rows == 3 ? STRIP_ROAD : rows == 2 ? STRIP_SCOPE : STRIP_POWERLINE;
+}
 
 int strip_look_next(int look, unsigned rows)
 {
@@ -193,6 +199,17 @@ void strip_road_peaks(float *peak, float *hold, const float *bar, int n, double 
 		if (fall > 0) peak[i] = (float)(peak[i] - PEAK_FALL * fall);
 		if (peak[i] < bar[i]) peak[i] = bar[i];
 	}
+}
+
+double strip_horizon_tie(int i, int n, double t)
+{
+	double d = fmod((double)i / n + 0.35 * t, 1.0);
+	return d < 0 ? d + 1 : d;
+}
+
+double strip_horizon_hill(const float *band, double d)
+{
+	return strip_road_bar(band, d < 0 ? 0 : d > 1 ? 1 : d);
 }
 
 int strip_bar(unsigned cols, double pos, double duration)
@@ -550,6 +567,28 @@ static void plasma_ground(struct ncplane *n, const struct strip_model *m, const 
 	}
 }
 
+/* The finest blitter the terminal has for coloured dots: octants, else
+ * quadrants, else half blocks; *dy, *dx its dots a cell. */
+static ncblitter_e dots(struct notcurses *nc, int *dy, int *dx)
+{
+	if (notcurses_canoctant(nc)) return *dy = 4, *dx = 2, NCBLIT_4x2;
+	if (notcurses_canquadrant(nc)) return *dy = 2, *dx = 2, NCBLIT_2x2;
+	return *dy = 2, *dx = 1, NCBLIT_2x1;
+}
+
+/* 0xRRGGBB as an opaque RGBA pixel (R first in memory). */
+static uint32_t pixel(uint32_t c) { return 0xff000000u | (c & 0xff) << 16 | (c & 0xff00) | (c >> 16 & 0xff); }
+
+static void blit(struct ncplane *n, uint32_t *px, int W, int H, int y, int x, ncblitter_e b)
+{
+	struct ncvisual *v = ncvisual_from_rgba(px, H, W * 4, W);
+	if (!v) return;
+	struct ncvisual_options vo = { .n = n, .y = y, .x = x, .blitter = b, .scaling = NCSCALE_NONE,
+	                               .flags = NCVISUAL_OPTION_NODEGRADE };
+	ncvisual_blit(ncplane_notcurses(n), v, &vo);
+	ncvisual_destroy(v);
+}
+
 /* The scope: its dots, a glow each, drawn with the finest blitter the
  * terminal has. The trace is laid on while playing; what was there fades
  * by the look's clock, so a pause holds it. */
@@ -565,11 +604,8 @@ static void scope_ground(struct strip *s, const struct strip_model *m, const str
 		if (s->glow) memset(s->glow, 0, sizeof(float) * (size_t)s->gw * (size_t)s->gh);
 		return;
 	}
-	struct notcurses *nc = ncplane_notcurses(n);
-	ncblitter_e blit = NCBLIT_2x1;
-	int dy = 2, dx = 1;
-	if (notcurses_canoctant(nc)) blit = NCBLIT_4x2, dy = 4, dx = 2;
-	else if (notcurses_canquadrant(nc)) blit = NCBLIT_2x2, dy = 2, dx = 2;
+	int dy, dx;
+	ncblitter_e how = dots(ncplane_notcurses(n), &dy, &dx);
 	int W = ((int)cols - a.scope) * dx, H = (int)rows * dy;
 	if (W <= 0 || H <= 0) return;
 	if (W != s->gw || H != s->gh) {
@@ -609,17 +645,11 @@ static void scope_ground(struct strip *s, const struct strip_model *m, const str
 			/* the newest trace hot, in the sky; older ones fainter, sinking to violet */
 			uint32_t c = g >= 1.0f ? rgb_mix(bg, hot, k)
 			                       : rgb_mix(bg, rgb_mix(violet, hot, g * g), AFTERGLOW * g * k);
-			/* RGBA in memory: R first */
-			px[y * W + x] = 0xff000000u | (c & 0xff) << 16 | (c & 0xff00) | (c >> 16 & 0xff);
+			px[y * W + x] = pixel(c);
 		}
 	}
-	struct ncvisual *v = ncvisual_from_rgba(px, H, W * 4, W);
+	blit(n, px, W, H, 0, a.scope, how);
 	free(px);
-	if (!v) return;
-	struct ncvisual_options vo = { .n = n, .x = a.scope, .blitter = blit, .scaling = NCSCALE_NONE,
-	                               .flags = NCVISUAL_OPTION_NODEGRADE };
-	ncvisual_blit(nc, v, &vo);
-	ncvisual_destroy(v);
 }
 
 /* The road: bars of the bands on every row but the last, peaks over them,
@@ -692,6 +722,84 @@ static void road_ground(struct strip *s, const struct strip_model *m, const stru
 	}
 }
 
+/* The horizon: the sky row, then the picture in dots below it. */
+static void horizon_ground(const struct strip_model *m, const struct theme *t, struct ncplane *n,
+                           unsigned rows, unsigned cols)
+{
+	plain_ground(n, t, rows, cols);
+	int going = m->daemon && !m->msg[0] && !m->refused[0] &&
+	            (m->st.state == TUI_PLAYING || m->st.state == TUI_PAUSED);
+	uint32_t bg = (uint32_t)t->c[TH_BG], fg = (uint32_t)t->c[TH_FG], cyan = (uint32_t)t->c[TH_CYAN],
+	         magenta = (uint32_t)t->c[TH_MAGENTA], violet = (uint32_t)t->c[TH_VIOLET],
+	         orange = (uint32_t)t->c[TH_ORANGE];
+	double k = m->st.state == TUI_PAUSED ? breathe(BREATH_LOW, m->breath) : going ? 1.0 : 0.45;
+	double beat = m->levels && m->st.state == TUI_PLAYING ? m->rx.beat : 0;
+	int dy, dx;
+	ncblitter_e how = dots(ncplane_notcurses(n), &dy, &dx);
+	int W = (int)cols * dx, H = ((int)rows - 1) * dy;
+	double sun = going ? (m->bar / 8.0) / cols : 0.5; /* where the road meets the sky */
+	double vx = sun * W;
+
+	/* the sky row: violet above, glowing magenta to orange by the sun below,
+	 * kept dark enough under the words */
+	for (unsigned x = 0; x < cols; x++) {
+		double d = (x + 0.5 - sun * cols) / cols, g = exp(-d * d * 60.0) * k;
+		ncplane_set_fg_rgb(n, rgb_mix(bg, violet, 0.20 * g));
+		ncplane_set_bg_rgb(n, rgb_mix(rgb_mix(bg, magenta, 0.35 * g), orange, 0.20 * g * g));
+		ncplane_putstr_yx(n, 0, (int)x, "▀");
+	}
+	if (W <= 0 || H <= 2) return;
+
+	uint32_t *px = malloc(sizeof(uint32_t) * (size_t)W * (size_t)H);
+	if (!px) return;
+	/* Few colours, as a cell of dots holds two: the ground, the mountains,
+	 * the horizon, the rails, the ties. */
+	int hz = H / 3 > 1 ? H / 3 : 1; /* the horizon's dot row */
+	double half = 0.25 * W;         /* the road's half width at your feet */
+	uint32_t ground = pixel(bg);
+	uint32_t hill = pixel(rgb_mix(bg, rgb_mix(violet, magenta, 0.35), 0.55 * k));
+	uint32_t rail = pixel(rgb_mix(bg, rgb_mix(magenta, fg, 0.15), 0.85 * k));
+	uint32_t tie = pixel(rgb_mix(bg, cyan, 0.75 * k));
+	for (int i = 0; i < W * H; i++) px[i] = ground;
+	/* the mountains: the bands, standing on the horizon either side of the sun */
+	if (going && m->levels) {
+		double far = vx > W - vx ? vx : W - vx;
+		for (int x = 0; x < W; x++) {
+			double h = strip_horizon_hill(m->rx.band, fabs(x + 0.5 - vx) / (far > 1 ? far : 1)) * hz;
+			for (int y = hz - (int)lround(h); y < hz; y++)
+				if (y >= 0) px[y * W + x] = hill;
+		}
+	}
+	/* the horizon, hot by the sun and on a beat */
+	for (int x = 0; x < W; x++) {
+		double d = (x + 0.5 - vx) / W, g = exp(-d * d * 30.0);
+		uint32_t c = rgb_mix(rgb_mix(bg, violet, 0.5), rgb_mix(magenta, fg, 0.3 + 0.5 * beat), g);
+		px[hz * W + x] = pixel(rgb_mix(bg, c, k));
+	}
+	/* the cross-ties, rushing in, nearer is lower and wider */
+	for (int i = 0; i < 4 && going; i++) {
+		double d = strip_horizon_tie(i, 4, m->anim), u = d * d;
+		int y = hz + 1 + (int)lround(u * (H - 2 - hz));
+		for (int x = (int)(vx - half * u); x <= (int)(vx + half * u); x++)
+			if (x >= 0 && x < W) px[y * W + x] = tie;
+	}
+	/* the road's edges and its middle, fanning out from the sun */
+	for (int r = -2; r <= 2; r += 2) {
+		int last = (int)vx;
+		for (int y = hz + 1; y < H; y++) {
+			double u = (double)(y - hz) / (H - 1 - hz);
+			int x = (int)lround(vx + half * u * r / 2.0);
+			int a = last < x ? last : x, b = last < x ? x : last;
+			if (b - a > 1) a = last < x ? last + 1 : x;
+			for (int xx = a; xx <= b; xx++)
+				if (xx >= 0 && xx < W) px[y * W + xx] = rail;
+			last = x;
+		}
+	}
+	blit(n, px, W, H, 1, 0, how);
+	free(px);
+}
+
 /* ------------------------------------------------------------------ strip */
 
 struct strip *strip_new(struct ncplane *base)
@@ -745,6 +853,15 @@ void strip_draw(struct strip *s, const struct strip_model *m, const struct theme
 		ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
 		struct pen p = { .n = s->text, .t = t, .age = -1, .fg = -1 };
 		row(&p, m, cols, 1);
+		return;
+	}
+	if (look == STRIP_HORIZON) {
+		horizon_ground(m, t, s->base, rows, cols);
+		ncplane_erase(s->text);
+		ncplane_set_styles(s->text, NCSTYLE_NONE);
+		ncplane_set_bg_alpha(s->text, NCALPHA_TRANSPARENT);
+		struct pen p = { .n = s->text, .t = t, .age = -1, .fg = -1 };
+		row(&p, m, cols, 0);
 		return;
 	}
 	if (look == STRIP_ROAD) {
