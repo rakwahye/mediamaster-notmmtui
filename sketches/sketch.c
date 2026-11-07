@@ -607,95 +607,204 @@ static const char *STAGE_TITLE = "Time";
 static const char *STAGE_ALBUM = "The Dark Side of the Moon";
 static const char *NEXT[] = { "The Great Gig in the Sky", "Money" };
 
-static void stage(struct notcurses *nc, struct ncplane *std, struct ncplane *txt, int f)
+/* a steady hash noise, 0..1 */
+static float n2(int a, int b) { return hash(a * 7919 + b * 104729 + 17); }
+
+/* The scene above the ground: sky, the sun on its arc, mountains, the
+ * horizon. Returns through *sx, *sy, *r where the sun is. */
+static void stage_sky(uint32_t *pix, int W, int hz, float p, float k, int f, float *psx, float *psy, float *pr)
 {
-	unsigned rows, cols;
-	ncplane_dim_yx(std, &rows, &cols);
-	float p = getenv("STAGE_P") ? (float)atof(getenv("STAGE_P")) : progress(f), k = paused(f) ? 0.70f + 0.30f * breath(f) : 1.0f;
-	int W = (int)cols * 2, H = ((int)rows - 1) * 4;
-	/* the words have rows 0-4; the horizon is below them, and lower when tall */
-	int hz = (int)((float)H * 0.64f);
-	if (hz < 5 * 4 + 1) hz = 5 * 4 + 1;
-	float sx = (float)W * 0.50f, r = (float)hz * 0.36f;
-	/* the sun sets: centre from above the mountains to below the horizon */
-	float sy = (float)hz - r * 1.05f + p * r * 2.3f;
+	/* the sun's arc: rising at the left as the track starts, highest half
+	 * way, setting at the right at the end */
+	float r = (float)hz * 0.30f;
+	float sx = (float)W * (0.06f + 0.88f * p);
+	float sy = (float)hz + r * 0.55f - sinf(3.14159f * p) * ((float)hz - r * 0.45f - 1.0f);
 	static float travel;
 	if (!paused(f)) travel += 0.03f + 0.10f * expf(-(float)(f % 8) * 0.6f);
-	ncplane_erase(std);
-	uint32_t *pix = calloc((size_t)W * H, 4);
-
-	for (int y = 0; y < H; y++)
+	/* low sun, warmer sky */
+	float warm = 1.0f - 0.6f * sinf(3.14159f * p);
+	for (int y = 0; y < hz; y++)
 		for (int x = 0; x < W; x++) {
-			struct rgb c = BG;
-			if (y < hz) { /* the sky: dark, warming to the horizon, glowing round the sun */
-				float v = (float)y / (float)hz;
-				float dx = ((float)x - sx) / (float)W;
-				float g = expf(-dx * dx * 18.0f);
-				c = mix(BG, scale(VIOLET, 0.55f), v * v * 0.45f);
-				c = mix(c, scale(MAGENTA, 0.8f), v * v * v * g * 0.55f);
-				/* the sun: orange-white at the top to magenta, the lower half striped */
-				float ddx = (float)x / 2.0f - sx / 2.0f, ddy = (float)y - sy; /* dots are 2:1 */
-				if (ddx * ddx * 4.0f + ddy * ddy <= r * r) {
-					float t = (ddy + r) / (2 * r);
-					int gap = 0;
-					if (t > 0.5f) {
-						float band = fmodf((float)y + travel * 2.0f, 4.0f);
-						gap = band < (t - 0.5f) * 5.0f;
-					}
-					if (!gap) c = mix(mix(ORANGE, WHITE, 0.35f), MAGENTA, t * 1.1f);
-				}
+			float v = (float)y / (float)hz;
+			float dx = ((float)x - sx) / (float)W;
+			float g = expf(-dx * dx * 14.0f);
+			struct rgb c = mix(BG, scale(VIOLET, 0.55f), v * v * 0.45f);
+			c = mix(c, scale(mix(MAGENTA, ORANGE, 0.3f * warm), 0.85f), v * v * v * g * (0.35f + 0.4f * warm));
+			float ddx = ((float)x - sx) / 2.0f, ddy = (float)y - sy;
+			if (ddx * ddx * 4.0f + ddy * ddy <= r * r) {
+				float t = (ddy + r) / (2 * r);
+				int gap = t > 0.5f && fmodf((float)y + travel * 2.0f, 4.0f) < (t - 0.5f) * 5.0f;
+				if (!gap) c = mix(mix(ORANGE, WHITE, 0.35f), MAGENTA, t * 1.1f);
 			}
 			pix[y * W + x] = px(scale(c, k), 255);
 		}
-	/* the mountains: the bands, mirrored about the sun, in front of it,
-	 * sinking away from it so the words keep a clear sky */
-	for (int x = 0; x < W; x++) {
-		float d = fabsf((float)x - sx) / ((float)W * 0.45f);
-		if (d >= 1) continue;
-		int b = (int)(d * 24.0f);
-		float h = band(b, 24, f) * (float)hz * 0.45f * (1.0f - d * d) + 1.0f;
+	for (int x = 0; x < W; x++) { /* mountains: the bands, about the sun, a silhouette */
+		float d = fabsf((float)x - (float)W * 0.5f) / ((float)W * 0.5f);
+		int b = (int)(d * 23.0f);
+		float h = band(b, 24, f) * (float)hz * 0.40f * (1.0f - 0.6f * d * d) + 1.0f;
 		for (int y = hz - (int)h; y < hz; y++)
 			if (y >= 0) pix[y * W + x] = px(scale(mix(BG, VIOLET, 0.10f), k), 255);
 	}
-	/* the horizon */
 	for (int x = 0; x < W; x++) {
 		float dx = ((float)x - sx) / (float)W;
 		pix[hz * W + x] = px(scale(mix(MAGENTA, mix(MAGENTA, WHITE, 0.6f), expf(-dx * dx * 40.0f)), k), 255);
 	}
-	/* the floor: a road from under the sun, its rails fanning out and three
-	 * ties coming in; one colour each, as a cell of dots holds two */
-	uint32_t railc = px(scale(mix(MAGENTA, WHITE, 0.10f), k), 255), tiec = px(scale(mix(BG, CYAN, 0.80f), k), 255);
-	float half = (float)W * 0.30f;
-	for (int i = 0; i < 3; i++) {
-		float d = fmodf((float)i / 3.0f + travel * 0.5f, 1.0f), u = d * d;
-		int y = hz + 2 + (int)(u * (float)(H - hz - 3) + 0.5f);
-		float w = half * ((float)(y - hz) / (float)(H - 1 - hz));
-		for (int x = (int)(sx - w); x <= (int)(sx + w); x++)
-			if (x >= 0 && x < W) pix[y * W + x] = tiec;
-	}
-	for (int l = -2; l <= 2; l++) {
-		int last = (int)sx;
-		for (int y = hz + 1; y < H; y++) {
-			float u = (float)(y - hz) / (float)(H - 1 - hz);
-			int x = (int)(sx + half * u * (float)l / 2.0f + 0.5f);
-			int a = last < x ? last : x, b = last < x ? x : last;
-			if (b - a > 1) a = last < x ? last + 1 : x;
-			for (int xx = a; xx <= b; xx++)
-				if (xx >= 0 && xx < W) pix[y * W + xx] = railc;
-			last = x;
+	*psx = sx, *psy = sy, *pr = r;
+}
+
+/* A: the ground is a lake. The sky and mountains mirrored, darker and
+ * bluer; the sun's light a broken column under it, wider as it nears;
+ * glints across the water, more as it gets louder, drifting in. */
+static void ground_lake(uint32_t *pix, int W, int H, int hz, float sx, float sy, float r, float k, int f)
+{
+	static float drift;
+	if (!paused(f)) drift += 0.25f + 0.6f * expf(-(float)(f % 8) * 0.6f);
+	float loud = 0;
+	for (int b = 0; b < 24; b++) loud += band(b, 24, f) / 24.0f;
+	for (int y = hz + 1; y < H; y++) {
+		int my = 2 * hz - y; /* the mirrored row */
+		float u = (float)(y - hz) / (float)(H - 1 - hz); /* 0 far .. 1 near */
+		for (int x = 0; x < W; x++) {
+			struct rgb c = BG;
+			if (my >= 0) {
+				uint32_t q = pix[my * W + x];
+				struct rgb m = { (float)(q & 0xff), (float)(q >> 8 & 0xff), (float)(q >> 16 & 0xff) };
+				c = mix(BG, mix(m, CYAN, 0.12f), 0.55f - 0.25f * u);
+			}
+			pix[y * W + x] = px(c, 255);
+		}
+		/* the sun's column: streaks of its colour, broken by the waves */
+		if (sy - r < (float)hz) {
+			float above = ((float)hz - (sy - r)) / (2 * r); /* how much of it is up */
+			float w = r * (0.5f + 1.6f * u) * (above > 1 ? 1 : above);
+			for (int x = (int)(sx - w); x <= (int)(sx + w); x++) {
+				if (x < 0 || x >= W) continue;
+				float on = n2(y, (int)((float)x / 3.0f + drift * (0.5f + u)));
+				if (on > 0.45f - 0.2f * u)
+					pix[y * W + x] = px(scale(mix(mix(ORANGE, MAGENTA, 0.35f + 0.4f * u), WHITE, 0.15f), k * (0.55f + 0.45f * (1 - u))), 255);
+			}
+		}
+		/* glints: short bright dashes drifting in, as many as it is loud */
+		for (int i = 0; i < 3 + (int)(loud * 14.0f); i++) {
+			int x = (int)(n2(y, i) * (float)W + drift * (2.0f + 6.0f * u) * (n2(i, y) - 0.5f)) % W;
+			if (x < 0) x += W;
+			int len = 2 + (int)(u * 6.0f);
+			struct rgb c = n2(i, y + 3) > 0.5f ? CYAN : MAGENTA;
+			for (int j = 0; j < len && x + j < W; j++)
+				pix[y * W + x + j] = px(scale(mix(BG, c, 0.35f + 0.5f * u), k), 255);
 		}
 	}
-	/* the title, big: 5x7 letters, a dot apart, two dots below the top */
-	int tx = 4, ty = 3;
-	for (const char *c = STAGE_TITLE; *c; c++, tx += 6) {
-		const unsigned char *g = glyph(*c);
-		for (int gy = 0; gy < 7; gy++)
-			for (int gx = 0; gx < 5; gx++)
-				if (g[gy] >> (4 - gx) & 1) {
-					int X = tx + gx, Y = ty + gy;
-					if (X < W && Y < H) pix[Y * W + X] = px(FG, 255);
-				}
+}
+
+/* B: the ground is a city at night, a road through it. Towers either
+ * side, nearer ones taller and darker, their windows lit by the bands
+ * (bass low in the towers, treble high), flickering; the road with
+ * traffic: tail lights going away, head lights coming in. */
+static void ground_city(uint32_t *pix, int W, int H, int hz, float sx, float k, int f)
+{
+	static float drive;
+	if (!paused(f)) drive += 0.02f + 0.05f * expf(-(float)(f % 8) * 0.6f);
+	(void)sx;
+	float vx = (float)W * 0.5f; /* the road runs to the middle of the horizon */
+	for (int y = hz + 1; y < H; y++)
+		for (int x = 0; x < W; x++) pix[y * W + x] = px(scale(mix(BG, VIOLET, 0.06f), k), 255);
+	/* the road */
+	float half = (float)W * 0.16f;
+	for (int y = hz + 1; y < H; y++) {
+		float u = (float)(y - hz) / (float)(H - 1 - hz);
+		float w = half * u;
+		for (int x = (int)(vx - w); x <= (int)(vx + w); x++)
+			if (x >= 0 && x < W) pix[y * W + x] = px(scale(mix(BG, VIOLET, 0.14f), k), 255);
+		int e1 = (int)(vx - w), e2 = (int)(vx + w);
+		if (e1 >= 0) pix[y * W + e1] = px(scale(MAGENTA, k), 255);
+		if (e2 < W) pix[y * W + e2] = px(scale(MAGENTA, k), 255);
 	}
+	/* traffic: lights in two lanes, by the look's clock */
+	for (int lane = 0; lane < 2; lane++)
+		for (int i = 0; i < 7; i++) {
+			float d = fmodf((float)i / 7.0f + (lane ? drive : -drive * 0.8f) + 1.0f, 1.0f);
+			float u = d * d;
+			int y = hz + 1 + (int)(u * (float)(H - 2 - hz));
+			float off = (lane ? 0.5f : -0.5f) * half * u;
+			int x = (int)(vx + off);
+			struct rgb c = lane ? mix(ORANGE, MAGENTA, 0.3f) : mix(CYAN, WHITE, 0.5f);
+			for (int dy2 = 0; dy2 <= (int)(u * 1.5f); dy2++)
+				for (int j = 0; j <= 1 + (int)(u * 3.0f); j++)
+					for (int s = -1; s <= 1; s += 2) {
+						int xx = x + s * (1 + (int)(u * 4.0f)) + (s > 0 ? j : -j), yy = y - dy2;
+						if (xx >= 0 && xx < W && yy > hz && yy < H) pix[yy * W + xx] = px(scale(c, k * (0.5f + 0.5f * u)), 255);
+					}
+		}
+	/* towers either side of the road, in two ranks: far ones standing on
+	 * the ground below the horizon, near ones up from the bottom and past
+	 * the horizon into the sky; windows lit by the band for their height
+	 * (bass low, treble high), flickering */
+	for (int rank = 0; rank < 2; rank++) {
+		int x = rank ? -3 : 0, t = rank * 31;
+		while (x < W) {
+			int bw = rank ? 10 + (int)(n2(t, 1) * 14.0f) : 6 + (int)(n2(t, 2) * 8.0f);
+			int foot = rank ? H : hz + (H - hz) / 2;
+			int top = rank ? hz - (int)(n2(t, 5) * (float)hz * 0.55f) + (int)(n2(t, 6) * 6.0f)
+			               : hz - 2 - (int)(n2(t, 7) * 7.0f);
+			float mid = ((float)x + (float)bw / 2.0f - vx) / (float)W;
+			/* keep the road open: near towers stand back from its edges */
+			float edge = rank ? 0.20f : 0.07f;
+			if (fabsf(mid) < edge) { x += rank ? 3 : 2; t++; continue; }
+			struct rgb wall = rank ? mix(BG, VIOLET, 0.20f) : mix(BG, VIOLET, 0.13f);
+			for (int y = top < 0 ? 0 : top; y < foot && y < H; y++)
+				for (int xx = x < 0 ? 0 : x; xx < x + bw - 1 && xx < W; xx++) {
+					struct rgb c = wall;
+					int wy = y - top, wx = xx - x;
+					if (xx == x + bw - 2 && rank) c = mix(wall, MAGENTA, 0.35f); /* a lit edge */
+					if (wy > 0 && wx > 0 && wx < bw - 2 && wy % 2 == 1 && wx % 2 == 1) {
+						float hgt = 1.0f - (float)(y - top) / (float)(foot - top + 1);
+						int b = (int)(hgt * 23.0f);
+						float lit = band(b, 24, f) - n2(xx / 2 + t * 13, y / 2) * 0.55f;
+						if (lit > 0) {
+							struct rgb wc = n2(t, 9) > 0.6f ? CYAN : n2(t, 3) > 0.45f ? MAGENTA : ORANGE;
+							c = mix(wall, wc, 0.45f + 0.55f * (lit > 0.4f ? 1 : lit / 0.4f));
+						}
+					}
+					pix[y * W + xx] = px(scale(c, k), 255);
+				}
+			x += bw + (rank ? 0 : 1);
+			t++;
+		}
+	}
+}
+
+static void stage_with(struct notcurses *nc, struct ncplane *std, struct ncplane *txt, int f, int lake)
+{
+	unsigned rows, cols;
+	ncplane_dim_yx(std, &rows, &cols);
+	float p = getenv("STAGE_P") ? (float)atof(getenv("STAGE_P")) : progress(f);
+	float k = paused(f) ? 0.70f + 0.30f * breath(f) : 1.0f;
+	int W = (int)cols * 2, H = ((int)rows - 1) * 4;
+	int hz = (int)((float)H * 0.58f);
+	if (hz < 5 * 4 + 1) hz = 5 * 4 + 1;
+	ncplane_erase(std);
+	uint32_t *pix = calloc((size_t)W * H, 4);
+	float sx, sy, r;
+	stage_sky(pix, W, hz, p, k, f, &sx, &sy, &r);
+	if (lake) ground_lake(pix, W, H, hz, sx, sy, r, k, f);
+	else ground_city(pix, W, H, hz, sx, k, f);
+
+	/* the title, big, with a dark outline so the sun can pass behind it */
+	int tx = 4, ty = 3;
+	for (int pass = 0; pass < 2; pass++)
+		for (const char *c = STAGE_TITLE; *c; c++) {
+			const unsigned char *g = glyph(*c);
+			int cx = tx + 6 * (int)(c - STAGE_TITLE);
+			for (int gy = 0; gy < 7; gy++)
+				for (int gx = 0; gx < 5; gx++) {
+					if (!(g[gy] >> (4 - gx) & 1)) continue;
+					for (int oy = pass ? 0 : -1; oy <= (pass ? 0 : 1); oy++)
+						for (int ox = pass ? 0 : -1; ox <= (pass ? 0 : 1); ox++) {
+							int X = cx + gx + ox, Y = ty + gy + oy;
+							if (X >= 0 && Y >= 0 && X < W && Y < H) pix[Y * W + X] = px(pass ? FG : BG, 255);
+						}
+				}
+		}
 	struct ncvisual *v = ncvisual_from_rgba(pix, H, W * 4, W);
 	struct ncvisual_options vo = { .n = std, .blitter = NCBLIT_4x2, .scaling = NCSCALE_NONE,
 	                               .flags = NCVISUAL_OPTION_NODEGRADE };
@@ -703,22 +812,24 @@ static void stage(struct notcurses *nc, struct ncplane *std, struct ncplane *txt
 	ncvisual_destroy(v);
 	free(pix);
 
-	/* the words over it */
+	/* the words, on a dark veil Notcurses blends over the scene */
 	ncplane_erase(txt);
-	ncplane_set_bg_alpha(txt, NCALPHA_TRANSPARENT);
+	ncplane_set_bg_rgb8(txt, (unsigned)BG.r, (unsigned)BG.g, (unsigned)BG.b);
+	ncplane_set_bg_alpha(txt, NCALPHA_BLEND);
 	fg(txt, VIOLET);
 	ncplane_putstr_yx(txt, 3, 2, ARTIST);
-	fg(txt, DIM);
+	fg(txt, mix(DIM, FG, 0.25f));
 	ncplane_printf_yx(txt, 4, 2, "%s", STAGE_ALBUM);
 	int nx = (int)cols - 28;
-	fg(txt, DIM);
+	fg(txt, mix(DIM, FG, 0.25f));
 	ncplane_putstr_yx(txt, 0, nx, "next");
 	for (int i = 0; i < 2; i++) {
-		fg(txt, i ? DIM : mix(DIM, FG, 0.5f));
+		fg(txt, i ? mix(DIM, FG, 0.25f) : mix(DIM, FG, 0.6f));
 		ncplane_printf_yx(txt, 1 + i, nx, "%d %s", i + 1, NEXT[i]);
 	}
 
-	/* the dashboard: state, time, a bar in the sky's colours, the meter */
+	/* the dashboard */
+	ncplane_set_bg_alpha(txt, NCALPHA_TRANSPARENT);
 	int y = (int)rows - 1;
 	char now[16], dur[16];
 	clock_str(now, sizeof(now), p * DUR);
@@ -729,9 +840,8 @@ static void stage(struct notcurses *nc, struct ncplane *std, struct ncplane *txt
 	ncplane_putstr_yx(txt, y, 3, now);
 	int bx = 9, bw = (int)cols - 9 - 13, head = (int)(p * (float)bw);
 	for (int x = 0; x < bw; x++) {
-		struct rgb c = sky((float)x / (float)bw);
-		fg(txt, x < head ? c : mix(BG, DIM, 0.8f));
-		ncplane_putstr_yx(txt, y, bx + x, x < head ? "━" : x == head ? "╸" : "─");
+		fg(txt, x < head ? sky((float)x / (float)bw) : mix(BG, DIM, 0.8f));
+		ncplane_putstr_yx(txt, y, bx + x, x < head ? "━" : "─");
 	}
 	fg(txt, FG);
 	ncplane_putstr_yx(txt, y, bx + head, "╸");
@@ -743,6 +853,9 @@ static void stage(struct notcurses *nc, struct ncplane *std, struct ncplane *txt
 	fg(txt, MAGENTA);
 	ncplane_putstr_yx(txt, y, (int)cols - 2, EIGHTHS[rr > 8 ? 8 : rr]);
 }
+
+static void stage_lake(struct notcurses *nc, struct ncplane *std, struct ncplane *txt, int f) { stage_with(nc, std, txt, f, 1); }
+static void stage_city(struct notcurses *nc, struct ncplane *std, struct ncplane *txt, int f) { stage_with(nc, std, txt, f, 0); }
 
 /* ------------------------------------------------------------------ main */
 
@@ -769,7 +882,8 @@ int main(int argc, char **argv)
 	if (argc != 4) return 2;
 	static const struct { const char *name; concept_fn fn; } C[] = {
 		{ "powerline", powerline }, { "wires", wires }, { "road", road },
-		{ "plasma", plasma }, { "scope", scope }, { "horizon", horizon }, { "stage", stage },
+		{ "plasma", plasma }, { "scope", scope }, { "horizon", horizon },
+		{ "stage-lake", stage_lake }, { "stage-city", stage_city },
 	};
 	concept_fn fn = NULL;
 	for (size_t i = 0; i < sizeof(C) / sizeof(C[0]); i++)

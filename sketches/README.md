@@ -22,29 +22,34 @@ freezes, the spectrum falls.
 
 ## The larger view: stage
 
-Eight rows and more: the horizon grown into a scene. `out/notmmtui-stage.gif`
-is 12×100; `out/notmmtui-stage-sunset.png` the same scene at the start of
-a track, half way and near the end, at 10×100.
+Nine rows and more: the horizon grown into a scene. Two grounds to choose
+from, `stage-lake` and `stage-city`; `out/notmmtui-stage-lake.gif` and
+`out/notmmtui-stage-city.gif` are 12×100, and `out/notmmtui-stage-arc.png`
+has both at the start of a track, half way and near the end.
 
-![stage](out/notmmtui-stage-sunset.png)
+![stage](out/notmmtui-stage-arc.png)
 
-- A striped sun that **sets as the track plays**: high at the start,
-  half behind the mountains half way, gone near the end. The picture is
-  the progress, as the powerline row is.
-- Mountains of the bands either side of it, a dark silhouette, sinking
-  away from it so the words keep a clear sky.
-- A road from under the sun, five rails fanning out and three ties
-  coming in on the kick (a full perspective grid ran together: at a few
-  rows of ground its lines are nearly flat).
-- The title big, in a 5×7 font drawn in octants (3 cells by 2 rows a
-  letter); artist and album under it; what is next in the queue at the
-  right, two items, the queue overlay's place to open from.
-- A dashboard on the last row: state, time, a bar in the sky's colours
-  with an eighth-cell head, the duration, the L/R meter.
-- The words keep rows 0–4 at any height; the horizon is below them,
-  lower when tall. Few colours in the dots, as a cell holds two.
+- The sun is the playhead on an **arc**: rising at the left as the track
+  starts, highest half way, setting at the right at the end. Striped,
+  the sky warmer round it when it is low.
+- Mountains of the bands, a dark silhouette on the horizon.
+- **lake:** the ground is water. The sky and mountains mirrored, darker
+  and bluer; the sun's light a broken column under it, wider as it nears
+  and following it across; glints drifting in, more as it gets louder.
+- **city:** the ground is a city at night with a road through it. Far
+  towers on the ground, near ones up from the bottom and into the sky,
+  their windows lit by the bands (bass low, treble high) and flickering;
+  traffic in two lanes, tail lights going away, head lights coming in.
+  The sun rises and sets behind the towers.
+- The title big, in a 5×7 font drawn in octants, uppercase, with a dark
+  outline so the sun can pass behind it; artist and album under it and
+  the next two in the queue at the right, on a dark veil Notcurses blends
+  over the scene (`NCALPHA_BLEND`).
+- A dashboard on the last row: state, time, a bar in the sky's colours,
+  the duration, the L/R meter.
+- The words keep rows 0–4 at any height; the horizon is below them.
 
-    STAGE_P=0.5 python3 run.py 10 100 stage 21 out/set.dump   # at a given progress
+    STAGE_P=0.5 python3 run.py 12 100 stage-lake 21 out/set.dump   # at a given progress
 
 ## Run
 
