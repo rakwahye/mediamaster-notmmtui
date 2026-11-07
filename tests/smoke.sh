@@ -317,6 +317,16 @@ $TTY 1 100 "$TUI" 'wait:/ 3:20' 'key:\t' 'wait:▶ 2  sine:330:200' 'gone:/ 3:20
 	'wait:1  sine:440:240' 'key:q' 'wait:/ 3:20' key:q || fail "queue on one row: the item selected; q closes it"
 $TTY 4 100 "$TUI" 'wait:/ 3:20' 'key:\t' 'wait:queue 2/3' 'wait:j k move' 'key:\e' 'gone:queue' key:q ||
 	fail "queue on four rows: a header; esc closes it"
+
+# the add line knows directories: from home, completed with tab, a file
+# added by its whole path, shown in the queue by its name
+mkdir -p "$T/home/Music/Osc" "$T/home/Mail"
+: >"$T/home/Music/Osc/song.flac"
+HOME="$T/home" $TTY 12 100 "$TUI" 'wait:3:20' 'key:\t' 'key:a' 'wait:add ~/' 'wait:Music/' 'wait:Mail/' \
+	'key:Mu' 'key:\t' 'wait:add: Music/' 'key:\t' 'wait:add: Music/Osc/' 'key:\t' 'wait:add: Music/Osc/song.flac' \
+	'key:\r' 'wait:4  song' 'gone:add:' 'key:a' 'key:~/Ma' 'key:\r' 'wait:add: ~/Mail/' 'key:\e' 'gone:add:' \
+	'key:\t' 'gone:queue' key:q || fail "queue: the add line, directories and tab"
+"$MMCTL" queue list -l | grep -q "$T/home/Music/Osc/song.flac" || fail "queue: the file added by its whole path"
 "$MMCTL" play sine:440:30 >/dev/null
 
 # the position counts on between reads; the daemon goes, comes back, is followed

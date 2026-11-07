@@ -40,8 +40,16 @@ n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits.
 it in a short terminal or pane; it fills what it is given.
 
 Tab opens the queue over the strip, on the item playing: j/k (↑/↓) select,
-g/G the first and last, ⏎ plays it, d removes it, a opens a line to type
-a URI into (⏎ adds it, Esc leaves it); Tab, Esc or q close it. The keys
+g/G the first and last, ⏎ plays it, d removes it, a opens a line to add
+from; Tab, Esc or q close it.
+
+The add line knows directories. A path is from your home (`~` is it, and
+an empty line lists it), and the rows above the line list what starts
+with what you have typed, directories first. Tab completes as readline
+does; ⏎ on a directory goes into it, on a file adds it by its whole path;
+a URI (`scheme:...`) is added as typed. Ctrl+U clears the line, Ctrl+W
+takes back a directory or a word, Esc leaves it. A key with modifiers
+types what it says, so a `~` behind Ctrl still types `~`. The keys
 above still work under it. It is a pane of smoked glass, as
 notcurses-demo draws its HUD: the look goes on under it, glyphs and all,
 dimly, without its words; the queue's words sit on it solid. From four rows a header says how

@@ -3,7 +3,10 @@
 #include "overlay.h"
 #include "check.h"
 #include <notcurses/notcurses.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static const char *Q = "1\t/home/u/music/Osc/two.flac\tTab Title\tOsc\tLP: One\t0:03\n"
                        "2\tsine:440:2\t-\t-\t-\t-\n"
@@ -85,34 +88,146 @@ static int moving(void)
 	return 0;
 }
 
+static char home[256];
+
+static void touch(const char *rel)
+{
+	char p[512];
+	snprintf(p, sizeof(p), "%s/%s", home, rel);
+	size_t n = strlen(p);
+	if (p[n - 1] == '/') {
+		p[n - 1] = '\0';
+		mkdir(p, 0700);
+		return;
+	}
+	FILE *f = fopen(p, "w");
+	if (f) fclose(f);
+}
+
+static void typed(struct overlay *o, const char *s)
+{
+	for (; *s; s++) {
+		char u[2] = { *s, 0 };
+		key(o, (unsigned char)*s, u, 0);
+	}
+}
+
 static int adding(void)
 {
+	snprintf(home, sizeof(home), "/tmp/notmmtui-test.XXXXXX");
+	CHECK(mkdtemp(home), "a home to look in");
+	touch("Music/");
+	touch("Music/Osc/");
+	touch("Music/Osc/one.flac");
+	touch("Music/Osc/two.flac");
+	touch("Music/Osc/twins.flac");
+	touch("Mail/");
+	touch("mix.flac");
+	touch(".hidden");
+
 	struct overlay o;
 	memset(&o, 0, sizeof(o));
+	snprintf(o.home, sizeof(o.home), "%s", home);
 	key(&o, NCKEY_TAB, NULL, 0);
 	overlay_set(&o, Q, 1);
 	CHECK(key(&o, 'a', "a", 0) == OVERLAY_TAKEN && o.adding, "a: the add line");
-	key(&o, 's', "s", 0);
-	key(&o, 'q', "q", 0); /* typed, not closing */
-	key(&o, ' ', " ", 0);
-	key(&o, 0xe9, "\xc3\xa9", 0);
-	CHECK(o.open && !strcmp(o.input, "sq \xc3\xa9"), "every key is the line's");
+	CHECK(o.nmatch == 3 && !strcmp(o.match[0], "Mail/") && !strcmp(o.match[1], "Music/") &&
+	      !strcmp(o.match[2], "mix.flac"), "empty: home, directories first, nothing hidden");
+
+	typed(&o, "M");
+	CHECK(o.nmatch == 2, "as you type, what starts with it");
+	key(&o, NCKEY_TAB, NULL, 0);
+	CHECK(!strcmp(o.input, "M"), "tab: two ways on, no further than they agree");
+	typed(&o, "u");
+	key(&o, NCKEY_TAB, NULL, 0);
+	CHECK(!strcmp(o.input, "Music/") && o.nmatch == 1, "one way: completed, a directory with its /");
+	key(&o, NCKEY_TAB, NULL, 0);
+	CHECK(!strcmp(o.input, "Music/Osc/"), "and on");
+	typed(&o, "t");
+	key(&o, NCKEY_TAB, NULL, 0);
+	CHECK(!strcmp(o.input, "Music/Osc/tw"), "as far as two and twins agree");
+	typed(&o, "o");
+	char want[512];
+	snprintf(want, sizeof(want), "%s/Music/Osc/two.flac", home);
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_COMMAND && is("queue", "add", want) && !o.adding,
+	      "enter: no such file, but one match: added, whole");
+
+	key(&o, 'a', "a", 0);
+	typed(&o, "~/Music/Osc");
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_TAKEN && !strcmp(o.input, "~/Music/Osc/") && o.nmatch == 3,
+	      "enter on a directory goes into it; ~ is home");
+	typed(&o, "one.flac");
+	snprintf(want, sizeof(want), "%s/Music/Osc/one.flac", home);
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_COMMAND && is("queue", "add", want), "a file: added, whole");
+
+	key(&o, 'a', "a", 0);
+	typed(&o, "Ma");
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_TAKEN && !strcmp(o.input, "Mail/"),
+	      "enter on the start of one directory: into it");
+	key(&o, 'w', "w", NCKEY_MOD_CTRL);
+	CHECK(o.input[0] == '\0', "ctrl+w: back a directory");
+	typed(&o, "Music/Osc/");
+	key(&o, 'w', "w", NCKEY_MOD_CTRL);
+	CHECK(!strcmp(o.input, "Music/"), "one at a time");
+	key(&o, 'u', "u", NCKEY_MOD_CTRL);
+	CHECK(o.input[0] == '\0' && o.adding, "ctrl+u: the line cleared, still up");
+	key(&o, '~', "~", NCKEY_MOD_CTRL);
+	CHECK(!strcmp(o.input, "~"), "a ~ behind ctrl is a ~");
+	key(&o, NCKEY_TAB, NULL, 0);
+	CHECK(!strcmp(o.input, "~/"), "~ and tab: ~/");
+	key(&o, 'x', "x", NCKEY_MOD_ALT);
+	key(&o, '1', "1", NCKEY_MOD_CTRL);
+	CHECK(!strcmp(o.input, "~/"), "ctrl or alt with a letter or digit types nothing");
+	typed(&o, ".h");
+	CHECK(o.nmatch == 1 && !strcmp(o.match[0], ".hidden"), "hidden when asked for");
+	key(&o, 'u', "u", NCKEY_MOD_CTRL);
+	typed(&o, "nothing");
+	CHECK(o.nmatch == 0, "nothing starts with that");
+
+	key(&o, 'u', "u", NCKEY_MOD_CTRL);
+	typed(&o, "sine:440:9");
+	CHECK(o.uri && o.nmatch == 0, "a URI: no paths");
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_COMMAND && is("queue", "add", "sine:440:9"), "added as typed");
+
+	key(&o, 'a', "a", 0);
+	typed(&o, "sq");
 	key(&o, NCKEY_BACKSPACE, NULL, 0);
-	CHECK(!strcmp(o.input, "sq "), "backspace: a whole letter");
 	key(&o, 0x7f, NULL, 0);
-	key(&o, NCKEY_LEFT, NULL, 0); /* no text */
-	CHECK(!strcmp(o.input, "sq"), "delete too; an arrow types nothing");
-	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_COMMAND && is("queue", "add", "sq") && !o.adding,
-	      "enter adds it, as one word");
+	key(&o, NCKEY_LEFT, NULL, 0);
+	CHECK(o.input[0] == '\0', "backspace, delete; an arrow types nothing");
+	key(&o, 0xe9, "\xc3\xa9", 0);
+	key(&o, NCKEY_BACKSPACE, NULL, 0);
+	CHECK(o.input[0] == '\0', "a whole letter at a time");
+	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_TAKEN && o.adding, "nothing typed: nothing added");
+	typed(&o, "q");
+	CHECK(o.open && !strcmp(o.input, "q"), "q is typed, not closing");
+	CHECK(key(&o, NCKEY_ESC, NULL, 0) == OVERLAY_TAKEN && !o.adding && o.open && !o.nmatch,
+	      "esc leaves the line, not the queue");
 	key(&o, 'a', "a", 0);
-	CHECK(o.input[0] == '\0', "a fresh line");
-	CHECK(key(&o, NCKEY_ENTER, NULL, 0) == OVERLAY_TAKEN && !o.adding, "nothing typed: nothing added");
-	key(&o, 'a', "a", 0);
-	key(&o, 'x', "x", 0);
-	CHECK(key(&o, NCKEY_ESC, NULL, 0) == OVERLAY_TAKEN && !o.adding && o.open, "esc leaves the line, not the queue");
 	for (int i = 0; i < 400; i++) key(&o, 'z', "z", 0);
 	CHECK(strlen(o.input) < OVERLAY_INPUT, "never past the end");
+	key(&o, NCKEY_ESC, NULL, 0);
 	tui_list_free(&o.q);
+
+	char cmd[300];
+	snprintf(cmd, sizeof(cmd), "rm -rf '%s'", home);
+	CHECK(system(cmd) == 0, "the home cleared away");
+	return 0;
+}
+
+static int expand(void)
+{
+	char out[256];
+	CHECK(overlay_expand("~/a", "/h", out, sizeof(out)) == 1 && !strcmp(out, "/h/a"), "~/ is home");
+	CHECK(overlay_expand("~", "/h", out, sizeof(out)) == 1 && !strcmp(out, "/h/"), "~ alone too");
+	CHECK(overlay_expand("a/b", "/h/", out, sizeof(out)) == 1 && !strcmp(out, "/h/a/b"), "relative: from home");
+	CHECK(overlay_expand("", "/h", out, sizeof(out)) == 1 && !strcmp(out, "/h/"), "nothing: home");
+	CHECK(overlay_expand("/x/y", "/h", out, sizeof(out)) == 1 && !strcmp(out, "/x/y"), "whole: as it is");
+	CHECK(overlay_expand("sine:440:9", "/h", out, sizeof(out)) == 0 && !strcmp(out, "sine:440:9"), "a URI");
+	CHECK(overlay_expand("http://x/y", "/h", out, sizeof(out)) == 0, "with //");
+	CHECK(overlay_expand("./a:b.flac", "/h", out, sizeof(out)) == 1 && !strcmp(out, "/h/./a:b.flac"),
+	      "a name with : starting ./ is a path");
+	CHECK(overlay_expand("~x", "/h", out, sizeof(out)) == 1 && !strcmp(out, "/h/~x"), "~x: a name in home");
 	return 0;
 }
 
@@ -133,6 +248,7 @@ int main(void)
 {
 	RUN(opening);
 	RUN(moving);
+	RUN(expand);
 	RUN(adding);
 	RUN(window);
 	CHECK_PASS("test-overlay");

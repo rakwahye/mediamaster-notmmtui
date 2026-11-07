@@ -22,7 +22,18 @@
  *
  *     j k ↑ ↓  select          g G    first, last
  *     ⏎        play it         d      remove it
- *     a        add: a line to type a URI into, ⏎ adds it, esc leaves it
+ *     a        add: a line to type a path or a URI into
+ *
+ * The add: line knows directories: a path is from your home (~ is it,
+ * and an empty line is it), and while you type the rows above it list
+ * what there starts with what you typed, directories first. Tab completes
+ * as readline does (as far as all the matches agree; a directory gets its
+ * /); ⏎ on a directory goes into it, on a file adds it (by its whole path,
+ * as the daemon's directory is not yours), on one match takes it; a URI
+ * (scheme:...) is added as typed. ctrl+u clears the line, ctrl+w takes
+ * back a word or a directory, backspace a letter, esc leaves it. Keys
+ * with modifiers type what they say (a ~ behind ctrl, say), but for
+ * ctrl or alt with a letter or a digit.
  *     tab esc q  close
  *
  * Any other key is the strip's (space, n, p, seek, volume). The queue is
@@ -50,6 +61,11 @@ struct overlay {
 	int adding;            /* the add: line is up */
 	char input[OVERLAY_INPUT];
 	char pos[24];          /* the word a command's position lives in */
+	char path[4096];       /* the word an added path lives in, whole */
+	char home[1024];       /* where a path starts from */
+	char **match;          /* what the add: line's path could go on to: names, a directory's with / */
+	size_t nmatch, more;   /* how many, and how many more there were */
+	int uri;               /* the add: line holds a URI, not a path */
 };
 
 enum overlay_did {
@@ -74,6 +90,14 @@ enum overlay_did overlay_key(struct overlay *o, uint32_t id, const struct ncinpu
  * (held to the list), and on first reading after opening goes to the item
  * playing. */
 void overlay_set(struct overlay *o, const char *reply, int first);
+
+/** `in` as the add: line reads it, with `home`: a path (into `out`,
+ * whole: ~ and a relative path from home) @returns 1; a URI (scheme: and
+ * on, as typed) @returns 0. */
+int overlay_expand(const char *in, const char *home, char *out, size_t n);
+
+/** Look again at what the add: line's path could go on to. */
+void overlay_scan(struct overlay *o);
 
 /** The first item to show so `sel` is in view in `rows` rows, moving
  * `top` no more than it must. */
