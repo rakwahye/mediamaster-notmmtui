@@ -199,6 +199,41 @@ static int stage(void)
 	return 0;
 }
 
+static int next(void)
+{
+	/* as tests/fixtures/queue-l.txt, the cursor moved */
+	const char *q = "1\t/home/u/music/Osc/two.flac\tTab Title\tOsc\tLP: One\t0:03\n"
+	                ">2\tsine:440:2\t-\t-\t-\t-\n"
+	                "3\tremote:track:4ptH\tTime\tPink Floyd\tThe Dark Side of the Moon\t6:53\n"
+	                "4\tsine:220:9\t-\t-\t-\t-\n"
+	                "5\tsine:330:9\t-\t-\t-\t-\n";
+	struct tui_list l = { 0 };
+	char nx[STRIP_NEXT][STRIP_NEXT_LEN];
+	CHECK(tui_list_queue(&l, q) == 0 && l.n == 5, "a queue of five");
+	CHECK(strip_next(&l, nx, STRIP_NEXT) == 2, "two of what is next");
+	CHECK(!strcmp(nx[0], "Time") && !strcmp(nx[1], "sine:220:9"), "after the cursor: a title, else the URI");
+	CHECK(strip_next(&l, nx, 1) == 1, "no more than asked");
+	CHECK(strip_next(&l, nx, 9) == 2, "nor than there is room for");
+	tui_list_free(&l);
+
+	CHECK(tui_list_queue(&l, "1\ta\tA\t-\t-\t-\n2\tb\t-\t-\t-\t-\n") == 0, "a queue not started");
+	CHECK(strip_next(&l, nx, 2) == 2 && !strcmp(nx[0], "A") && !strcmp(nx[1], "b"), "from the top");
+	tui_list_free(&l);
+
+	CHECK(tui_list_queue(&l, ">1\tx\t-\t-\t-\t-\n2\t/home/u/music/Osc/two.flac\t-\t-\t-\t-\n"
+	                         "3\t/home/u/.hidden\t-\t-\t-\t-\n") == 0, "untitled files next");
+	CHECK(strip_next(&l, nx, 2) == 2 && !strcmp(nx[0], "two"), "a file by its name, no folder or extension");
+	CHECK(!strcmp(nx[1], ".hidden"), "a name that is all extension is kept whole");
+	tui_list_free(&l);
+
+	CHECK(tui_list_queue(&l, "1\ta\t-\t-\t-\t-\n>2\tb\t-\t-\t-\t-\n") == 0, "the cursor on the last");
+	CHECK(strip_next(&l, nx, 2) == 0, "nothing next");
+	tui_list_free(&l);
+	CHECK(tui_list_queue(&l, "queue is empty\n") == 0 && strip_next(&l, nx, 2) == 0, "an empty queue: nothing");
+	tui_list_free(&l);
+	return 0;
+}
+
 static int road(void)
 {
 	float band[TUI_BANDS] = { 0 };
@@ -236,5 +271,6 @@ int main(void)
 	RUN(road);
 	RUN(horizon);
 	RUN(stage);
+	RUN(next);
 	CHECK_PASS("test-strip");
 }

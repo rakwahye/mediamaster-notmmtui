@@ -33,8 +33,8 @@ track starts and setting at the right at its end; stars over it, and
 mountains of the bands on the horizon. The lake mirrors it all, the
 sun's light a broken column on it, glints on the water as loud as the
 music. The title is big, in a 5×7 font drawn in octants, bigger as the
-stage is taller; artist and album under it; the time, a bar and the
-meter along the bottom. `l` switches between the looks the strip is tall
+stage is taller; artist and album under it, what is next in the queue
+at the right; the time, a bar and the meter along the bottom. `l` switches between the looks the strip is tall
 enough for, as it runs. Keys: space toggles,
 n/p next/prev, ←/→ seek 5 s (⇧ 30 s), +/- volume, s stop, l look, q quits. Run
 it in a short terminal or pane; it fills what it is given. It follows the

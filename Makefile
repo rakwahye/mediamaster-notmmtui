@@ -118,7 +118,7 @@ $(T)/test-theme: tests/theme_test.c src/theme.c src/theme.h tests/check.h Makefi
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c,$^) $(TUI_LIBS) -o $@
 
-$(T)/test-strip: tests/strip_test.c src/strip.c src/font.c src/theme.c src/ipc.c $(HDRS) tests/check.h Makefile
+$(T)/test-strip: tests/strip_test.c src/strip.c src/font.c src/reply.c src/theme.c src/ipc.c $(HDRS) tests/check.h Makefile
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CFLAGS) $(filter %.c %.o,$^) $(TUI_LIBS) -o $@
 

@@ -288,6 +288,20 @@ $TTY 10 100 "$TUI" 'wait:4:00' 'fgat:1@9=ff2bd6' 'gone:/ 4:00' 'moving:50@8' 'si
 	'size:10,100' 'gone:/ 4:00' 'fgat:1@9=ff2bd6' 'key: ' 'wait:‖' 'key: ' 'wait:▶' key:q ||
 	fail "stage: ten rows, four, ten again; a pause"
 $TTY 8 100 "$TUI --look stage" 'wait:/ 4:00' key:q || fail "stage on eight rows: powerline"
+
+# the stage says what is next in the queue, and keeps up: n moves on, and
+# an item added while it runs shows
+"$MMCTL" queue clear >/dev/null
+"$MMCTL" play sine:440:240 >/dev/null
+"$MMCTL" queue add sine:220:30 sine:330:30 >/dev/null
+rm -f "$T/added"
+$TTY 12 100 "$TUI" 'wait:1 sine:220:30' 'wait:2 sine:330:30' 'key:n' 'wait:1 sine:330:30' \
+	"touch:$T/added" 'wait:2 sine:550:30' key:q &
+TP=$!
+i=0
+until [ -e "$T/added" ]; do i=$((i + 1)); [ $i -lt 200 ] || fail "stage: next did not move on"; sleep 0.05; done
+"$MMCTL" queue add sine:550:30 >/dev/null
+wait $TP || fail "stage: what is next, after n and an add"
 "$MMCTL" play sine:440:30 >/dev/null
 
 # the position counts on between reads; the daemon goes, comes back, is followed

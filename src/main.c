@@ -121,6 +121,26 @@ static int poll_status(struct strip_model *m)
 	return changed;
 }
 
+/* Ask what is next in the queue, for the stage. @returns 1 if it changed. */
+static int poll_queue(struct strip_model *m)
+{
+	static char reply[16384];
+	char *argv[] = { "queue", "list", "-l", NULL };
+	char next[STRIP_NEXT][STRIP_NEXT_LEN];
+	struct tui_list q = { 0 };
+	int n = 0;
+	if (tui_call(3, argv, reply, sizeof(reply)) == TUI_OK && tui_list_queue(&q, reply) >= 0)
+		n = strip_next(&q, next, STRIP_NEXT);
+	tui_list_free(&q);
+	int changed = n != m->nnext;
+	for (int i = 0; i < n; i++) {
+		changed |= strcmp(m->next[i], next[i]) != 0;
+		memcpy(m->next[i], next[i], sizeof(next[i]));
+	}
+	m->nnext = n;
+	return changed;
+}
+
 static void deadline(struct timespec *ts, long ms)
 {
 	clock_gettime(CLOCK_MONOTONIC, ts);
@@ -293,7 +313,7 @@ static int run(const struct theme *theme, int look)
 	struct follow f = { .w = TUI_WATCH_INIT, .polling = 1, .backoff_ms = RETRY_MIN_MS,
 	                    .lw = TUI_WATCH_INIT, .lbackoff_ms = RETRY_MIN_MS, .rx = &m.rx };
 	struct timespec msg_until = { 0, 0 };
-	int dirty = 1, need_status = 1, quit = 0;
+	int dirty = 1, need_status = 1, need_queue = 1, quit = 0;
 	struct timespec frame_at, changed_at, start;
 	clock_gettime(CLOCK_MONOTONIC, &frame_at);
 	start = changed_at = frame_at;
@@ -303,6 +323,7 @@ static int run(const struct theme *theme, int look)
 	while (!quit) {
 		keep_watching(&f, &m, &need_status);
 		keep_levels(&f, &m);
+		if (!f.polling && past(&f.resync)) need_queue = 1; /* in case a change went by */
 		if (f.polling || past(&f.resync)) need_status = 1;
 		if (need_status && m.refused[0]) { /* not ours to talk to: no status, just the refusal */
 			m.daemon = 0;
@@ -321,7 +342,7 @@ static int run(const struct theme *theme, int look)
 		ncplane_dim_yx(std, &rows, &cols);
 		if (look < 0 && m.look != strip_look_for(rows)) { /* none asked for: the height's */
 			m.look = strip_look_for(rows);
-			dirty = 1;
+			need_queue = dirty = 1;
 		}
 		int bar = strip_bar(cols, pos, m.st.duration);
 		if (floor(pos) != m.pos || bar != m.bar) { /* the clock, or the bar by an eighth */
@@ -332,6 +353,7 @@ static int run(const struct theme *theme, int look)
 		/* a new item decodes in; its title and artist are known once status is */
 		if (m.daemon && m.st.item && m.st.item != last_item) {
 			last_item = m.st.item;
+			need_queue = 1;
 			clock_gettime(CLOCK_MONOTONIC, &changed_at);
 			m.decode = 0;
 		}
@@ -339,6 +361,11 @@ static int run(const struct theme *theme, int look)
 			m.decode = since(&changed_at);
 			if (m.decode > strip_decode_time(strlen(m.st.title) + strlen(m.st.artist) + strlen(m.st.uri)))
 				m.decode = STRIP_SETTLED;
+		}
+		/* what is next, asked only for the look that shows it */
+		if (need_queue && m.look == STRIP_STAGE && m.daemon && !m.refused[0]) {
+			dirty |= poll_queue(&m);
+			need_queue = 0;
 		}
 		/* a look that moves: its clock runs while playing; a pause breathes */
 		int playing = m.daemon && m.st.state == TUI_PLAYING;
@@ -383,7 +410,7 @@ static int run(const struct theme *theme, int look)
 			} else if (k == 'l' && ncinput_nomod_p(&ni)) {
 				ncplane_dim_yx(std, &rows, &cols);
 				m.look = look = strip_look_next(m.look, rows); /* asked for now */
-				dirty = 1;
+				need_queue = dirty = 1;
 			} else if (!m.refused[0] && (cargc = keys_command(k, &ni, cargv, buf)) > 0) {
 				command(cargc, cargv, &m, &msg_until);
 				need_status = dirty = 1; /* show the result now */
@@ -391,7 +418,7 @@ static int run(const struct theme *theme, int look)
 		}
 		if (f.w.fd >= 0 && tui_watch_read(&f.w, on_line, &f) != 0) {
 			deadline(&f.retry, f.backoff_ms); /* closed: the daemon went, or dropped us */
-			need_status = 1;
+			need_status = need_queue = 1;
 		}
 		if (f.lw.fd >= 0 && tui_watch_read(&f.lw, on_levels, &f) != 0) {
 			deadline(&f.lretry, f.lbackoff_ms); /* closed: opened again in a moment */
@@ -413,6 +440,7 @@ static int run(const struct theme *theme, int look)
 		}
 		if (f.events) {
 			need_status = 1;
+			if (f.events & (TUI_EV_QUEUE | TUI_EV_TRACK)) need_queue = 1;
 			f.events = 0;
 		}
 	}

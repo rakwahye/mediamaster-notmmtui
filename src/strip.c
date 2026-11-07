@@ -246,6 +246,32 @@ int strip_big_text(const char *s, char *out, size_t n, int max)
 	return i;
 }
 
+int strip_next(const struct tui_list *q, char next[][STRIP_NEXT_LEN], int max)
+{
+	size_t from = 0;
+	for (size_t i = 0; i < q->n; i++)
+		if (q->v[i].cursor) from = i + 1;
+	int n = 0;
+	if (max > STRIP_NEXT) max = STRIP_NEXT;
+	for (size_t i = from; i < q->n && n < max; i++, n++) {
+		const char *u = q->v[i].uri;
+		if (q->v[i].title[0]) {
+			snprintf(next[n], STRIP_NEXT_LEN, "%s", q->v[i].title);
+			continue;
+		}
+		/* untitled: a file by its name, without folder or extension */
+		const char *slash = strrchr(u, '/');
+		if (!slash || !slash[1]) {
+			snprintf(next[n], STRIP_NEXT_LEN, "%s", u);
+			continue;
+		}
+		const char *name = slash + 1, *dot = strrchr(name, '.');
+		int len = dot && dot != name && strlen(dot) <= 6 ? (int)(dot - name) : (int)strlen(name);
+		snprintf(next[n], STRIP_NEXT_LEN, "%.*s", len, name);
+	}
+	return n;
+}
+
 int strip_bar(unsigned cols, double pos, double duration)
 {
 	if (duration <= 0 || !cols) return -1;
@@ -1013,6 +1039,22 @@ static void stage_words(struct pen *p, const struct strip_model *m, unsigned row
 	if (st->album[0]) {
 		p->y = a->words - 1;
 		say(p, TH_DIM, 2, st->album, a->right - 1);
+	}
+	/* what is next, at the right: the first brighter */
+	if (m->nnext && a->right < (int)cols) {
+		int x = a->right + 2;
+		p->y = 0;
+		say(p, TH_DIM, x, "next", (int)cols - 1);
+		for (int i = 0; i < m->nnext && i + 1 < a->words; i++) {
+			char num[16];
+			snprintf(num, sizeof(num), "%d ", i + 1);
+			p->y = i + 1;
+			int at = say(p, TH_DIM, x, num, (int)cols - 1);
+			if (!i && t->c[TH_DIM] != THEME_DEFAULT && t->c[TH_FG] != THEME_DEFAULT)
+				p->fg = (int32_t)rgb_mix((uint32_t)t->c[TH_DIM], (uint32_t)t->c[TH_FG], 0.6);
+			say(p, TH_DIM, at, m->next[i], (int)cols - 1);
+			p->fg = -1;
+		}
 	}
 	p->veil = 0;
 

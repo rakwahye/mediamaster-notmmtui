@@ -74,7 +74,8 @@
  *              octants and as much bigger as the stage is tall
  *              (strip_stage_scale), outlined so the sun can pass behind
  *              it; small where there are no octants or the font lacks a
- *              letter. Artist and album are under it on a veil. The last
+ *              letter. Artist and album are under it on a veil, and what
+ *              is next in the queue at the right, two of it. The last
  *              row is a dashboard: state, time, a bar in the sky's colours,
  *              the duration, the meter.
  *
@@ -134,6 +135,10 @@ int strip_look_for(unsigned rows);
 int strip_look_next(int look, unsigned rows);
 
 /** What the strip shows; the main loop fills it from the daemon. */
+/** How many of what is next the stage shows, and how long each may be. */
+#define STRIP_NEXT     2
+#define STRIP_NEXT_LEN 192
+
 struct strip_model {
 	int daemon;            /* 0: nothing answers on the socket */
 	struct tui_status st;  /* valid when daemon */
@@ -148,6 +153,8 @@ struct strip_model {
 	int levels;            /* lv holds what the daemon last said: show the meter */
 	struct tui_levels lv;
 	struct react rx;       /* envelopes of the levels, for the looks to move with */
+	char next[STRIP_NEXT][STRIP_NEXT_LEN]; /* what is next in the queue (strip_next), for the stage */
+	int nnext;
 };
 
 #define STRIP_SETTLED 1e9
@@ -234,6 +241,12 @@ void strip_stage_sun(double p, double *x, double *alt);
  * "..." when it is cut), into `out`. @returns the letters, or 0 when the
  * font cannot draw one of them (the title is then drawn small). */
 int strip_big_text(const char *s, char *out, size_t n, int max);
+
+/** What is next in queue `q`: the items after its cursor (from the top
+ * when it has none), their titles or, untitled, their URIs (a path by its
+ * file's name, without the extension), at most `max` (no more than
+ * STRIP_NEXT) into `next`. @returns how many. */
+int strip_next(const struct tui_list *q, char next[][STRIP_NEXT_LEN], int max);
 
 /** "m:ss", or "h:mm:ss" from an hour. */
 void strip_clock(char *buf, size_t cap, double s);
