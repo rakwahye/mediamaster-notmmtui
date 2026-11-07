@@ -47,7 +47,17 @@ has both at the start of a track, half way and near the end.
   over the scene (`NCALPHA_BLEND`).
 - A dashboard on the last row: state, time, a bar in the sky's colours,
   the duration, the L/R meter.
-- The words keep rows 0–4 at any height; the horizon is below them.
+- The words keep their rows at any height; the horizon is below them.
+
+**Chosen: lake**, not switchable. Tall (`out/notmmtui-stage-tall.gif` at
+30×120; `out/notmmtui-stage-tall20.png`, `-tall30`, `-tall45` at three
+points in a track):
+
+- The title grows with the stage: a font dot is n×n dots, n = rows / 11
+  (1 to 4), so a letter is 3n cells by 2n rows.
+- Stars in the dark upper sky, twinkling, keeping clear of the words and
+  the sun.
+- The sun's column on the water stays narrow as the lake gets tall.
 
     STAGE_P=0.5 python3 run.py 12 100 stage-lake 21 out/set.dump   # at a given progress
 

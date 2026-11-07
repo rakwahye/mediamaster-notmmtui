@@ -612,6 +612,9 @@ static float n2(int a, int b) { return hash(a * 7919 + b * 104729 + 17); }
 
 /* The scene above the ground: sky, the sun on its arc, mountains, the
  * horizon. Returns through *sx, *sy, *r where the sun is. */
+/* where the words are, in cells, for the stars to keep clear of */
+static int clear_rows, clear_left, clear_right;
+
 static void stage_sky(uint32_t *pix, int W, int hz, float p, float k, int f, float *psx, float *psy, float *pr)
 {
 	/* the sun's arc: rising at the left as the track starts, highest half
@@ -638,6 +641,16 @@ static void stage_sky(uint32_t *pix, int W, int hz, float p, float k, int f, flo
 			}
 			pix[y * W + x] = px(scale(c, k), 255);
 		}
+	/* stars, in the dark upper sky, twinkling; none in front of the sun */
+	for (int i = 0; i < W * hz / 90; i++) {
+		int x = (int)(n2(i, 1) * (float)W), y = (int)(n2(i, 2) * n2(i, 3) * (float)hz * 0.75f);
+		float ddx = ((float)x - sx) / 2.0f, ddy = (float)y - sy;
+		if (ddx * ddx * 4.0f + ddy * ddy <= r * r * 1.3f) continue;
+		if (y / 4 <= clear_rows && (x / 2 <= clear_left + 1 || x / 2 >= clear_right - 1)) continue;
+		float tw = 0.5f + 0.5f * sinf((float)f * (0.2f + 0.5f * n2(i, 4)) + 6.28f * n2(i, 5));
+		struct rgb c = n2(i, 6) > 0.8f ? CYAN : n2(i, 6) > 0.6f ? MAGENTA : FG;
+		pix[y * W + x] = px(scale(mix(BG, c, (0.25f + 0.55f * tw) * (1.0f - (float)y / (float)hz)), 1.0f), 255);
+	}
 	for (int x = 0; x < W; x++) { /* mountains: the bands, about the sun, a silhouette */
 		float d = fabsf((float)x - (float)W * 0.5f) / ((float)W * 0.5f);
 		int b = (int)(d * 23.0f);
@@ -676,7 +689,7 @@ static void ground_lake(uint32_t *pix, int W, int H, int hz, float sx, float sy,
 		/* the sun's column: streaks of its colour, broken by the waves */
 		if (sy - r < (float)hz) {
 			float above = ((float)hz - (sy - r)) / (2 * r); /* how much of it is up */
-			float w = r * (0.5f + 1.6f * u) * (above > 1 ? 1 : above);
+			float w = r * (0.45f + 0.75f * u) * (above > 1 ? 1 : above);
 			for (int x = (int)(sx - w); x <= (int)(sx + w); x++) {
 				if (x < 0 || x >= W) continue;
 				float on = n2(y, (int)((float)x / 3.0f + drift * (0.5f + u)));
@@ -780,9 +793,20 @@ static void stage_with(struct notcurses *nc, struct ncplane *std, struct ncplane
 	float p = getenv("STAGE_P") ? (float)atof(getenv("STAGE_P")) : progress(f);
 	float k = paused(f) ? 0.70f + 0.30f * breath(f) : 1.0f;
 	int W = (int)cols * 2, H = ((int)rows - 1) * 4;
+	/* the title grows with the stage: a font dot is sc x sc dots, a letter
+	 * 3sc cells by 2sc rows; the artist and album under it; the horizon
+	 * below all of the words */
+	int sc = (int)rows / 11;
+	if (sc < 1) sc = 1;
+	if (sc > 4) sc = 4;
+	int words = 2 * sc + 3; /* rows the words take */
 	int hz = (int)((float)H * 0.58f);
-	if (hz < 5 * 4 + 1) hz = 5 * 4 + 1;
+	if (hz < words * 4 + 1) hz = words * 4 + 1;
 	ncplane_erase(std);
+	clear_rows = words - 1;
+	clear_left = 2 + (int)strlen(STAGE_ALBUM) > 2 + 3 * sc * (int)strlen(STAGE_TITLE) ? 2 + (int)strlen(STAGE_ALBUM)
+	                                                                                  : 2 + 3 * sc * (int)strlen(STAGE_TITLE);
+	clear_right = (int)cols - 28;
 	uint32_t *pix = calloc((size_t)W * H, 4);
 	float sx, sy, r;
 	stage_sky(pix, W, hz, p, k, f, &sx, &sy, &r);
@@ -794,13 +818,14 @@ static void stage_with(struct notcurses *nc, struct ncplane *std, struct ncplane
 	for (int pass = 0; pass < 2; pass++)
 		for (const char *c = STAGE_TITLE; *c; c++) {
 			const unsigned char *g = glyph(*c);
-			int cx = tx + 6 * (int)(c - STAGE_TITLE);
+			int cx = tx + 6 * sc * (int)(c - STAGE_TITLE);
 			for (int gy = 0; gy < 7; gy++)
 				for (int gx = 0; gx < 5; gx++) {
 					if (!(g[gy] >> (4 - gx) & 1)) continue;
-					for (int oy = pass ? 0 : -1; oy <= (pass ? 0 : 1); oy++)
-						for (int ox = pass ? 0 : -1; ox <= (pass ? 0 : 1); ox++) {
-							int X = cx + gx + ox, Y = ty + gy + oy;
+					for (int oy = pass ? 0 : -1; oy <= (pass ? 0 : 1) + sc - 1 + (pass ? 0 : 0); oy++)
+						for (int ox = pass ? 0 : -1; ox <= (pass ? 0 : 1) + sc - 1; ox++) {
+							int X = cx + gx * sc + ox, Y = ty + gy * sc + oy;
+							if (pass && (ox >= sc || oy >= sc)) continue;
 							if (X >= 0 && Y >= 0 && X < W && Y < H) pix[Y * W + X] = px(pass ? FG : BG, 255);
 						}
 				}
@@ -817,9 +842,9 @@ static void stage_with(struct notcurses *nc, struct ncplane *std, struct ncplane
 	ncplane_set_bg_rgb8(txt, (unsigned)BG.r, (unsigned)BG.g, (unsigned)BG.b);
 	ncplane_set_bg_alpha(txt, NCALPHA_BLEND);
 	fg(txt, VIOLET);
-	ncplane_putstr_yx(txt, 3, 2, ARTIST);
+	ncplane_putstr_yx(txt, words - 2, 2, ARTIST);
 	fg(txt, mix(DIM, FG, 0.25f));
-	ncplane_printf_yx(txt, 4, 2, "%s", STAGE_ALBUM);
+	ncplane_printf_yx(txt, words - 1, 2, "%s", STAGE_ALBUM);
 	int nx = (int)cols - 28;
 	fg(txt, mix(DIM, FG, 0.25f));
 	ncplane_putstr_yx(txt, 0, nx, "next");
